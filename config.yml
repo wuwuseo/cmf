@@ -7,11 +7,11 @@ server:
 database:
   DBType: mysql
   Username: root
-  Password: root
-  Host: 127.0.0.1:3306
-  DBName: thinkcmf
+  Password: 123456Aa?
+  Host: 172.17.0.9:3306
+  DBName: cardsys
   TablePrefix: cmf_
   Charset: utf8mb4
   ParseTime: true
-  MaxIdleConns: 10
-  MaxOpenConns: 30
+  MaxIdleConns: 10000
+  MaxOpenConns: 20000
