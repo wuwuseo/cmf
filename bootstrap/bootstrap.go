@@ -23,7 +23,7 @@ func NewBootstrap() *Bootstrap {
 	}
 }
 
-func (b *Bootstrap) Run() {
+func (b *Bootstrap) Run() error {
 	app := fiber.New(fiber.Config{
 		IdleTimeout: time.Duration(b.Config.App.IdleTimeout) * time.Second,
 	})
@@ -52,4 +52,5 @@ func (b *Bootstrap) Run() {
 	// db.Close()
 	// redisConn.Close()
 	log.Warnf("Fiber was successful shutdown.")
+	return nil
 }
