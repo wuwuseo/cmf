@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/gofiber/swagger"
+	"github.com/wuwuseo/cmf/cache"
 	"github.com/wuwuseo/cmf/config"
 	"github.com/wuwuseo/cmf/log"
 )
@@ -220,6 +222,16 @@ func (b *Bootstrap) init() {
 	log.InitDefaultLogger(Config)
 	fiberlog.Info("执行初始化函数...")
 
+	// 初始化并注册缓存服务
+	fiberlog.Info("初始化缓存服务...")
+	cacheInstance, err := cache.NewCacheFromConfig(context.Background(), Config)
+	if err != nil {
+		fiberlog.Fatalf("缓存初始化失败: %v", err)
+	}
+	b.RegisterService("cache", cacheInstance)
+	fiberlog.Infof("缓存服务已注册，驱动类型: %s", Config.Cache.Driver)
+
+	// 执行所有注册的初始化函数
 	for _, initFunc := range b.initFuncs {
 		if err := initFunc(Config); err != nil {
 			fiberlog.Fatalf("初始化失败: %v", err)
