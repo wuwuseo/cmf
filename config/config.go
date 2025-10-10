@@ -15,6 +15,7 @@ type Config struct {
 		IdleTimeout int    `mapstructure:"idle_timeout"`
 		Prefork     bool   `mapstructure:"prefork"`
 		Swagger     bool   `mapstructure:"swagger"`
+		Secret      string `mapstructure:"secret"`
 	} `mapstructure:"app"`
 
 	Log struct {
@@ -39,29 +40,28 @@ type Config struct {
 
 	// 缓存配置
 	Cache struct {
-		Driver        string `mapstructure:"driver"`        // 缓存驱动类型，如 bigcache, memory
-		DefaultTTL    int    `mapstructure:"default_ttl"`   // 默认缓存过期时间（秒）
-		Size          int    `mapstructure:"size"`          // 缓存大小
-		CleanWindow   int    `mapstructure:"clean_window"`  // 清理窗口（秒）
-		HardMaxCacheSize int `mapstructure:"hard_max_cache_size"` // 最大缓存大小（MB）
+		Driver           string `mapstructure:"driver"`              // 缓存驱动类型，如 bigcache, memory
+		DefaultTTL       int    `mapstructure:"default_ttl"`         // 默认缓存过期时间（秒）
+		Size             int    `mapstructure:"size"`                // 缓存大小
+		CleanWindow      int    `mapstructure:"clean_window"`        // 清理窗口（秒）
+		HardMaxCacheSize int    `mapstructure:"hard_max_cache_size"` // 最大缓存大小（MB）
 	} `mapstructure:"cache"`
 
 	// Redis配置
 	Redis struct {
-		Addr               string `mapstructure:"addr"`                // Redis服务器地址，格式为"host:port"
-		Password           string `mapstructure:"password"`            // Redis密码，无密码时为空字符串
-		DB                 int    `mapstructure:"db"`                  // Redis数据库索引
-		DialTimeout        int    `mapstructure:"dial_timeout"`        // 连接超时时间（秒）
-		ReadTimeout        int    `mapstructure:"read_timeout"`        // 读取超时时间（秒）
-		WriteTimeout       int    `mapstructure:"write_timeout"`       // 写入超时时间（秒）
-		PoolSize           int    `mapstructure:"pool_size"`           // 连接池大小
-		MinIdleConns       int    `mapstructure:"min_idle_conns"`      // 最小空闲连接数
-		MaxIdleConns       int    `mapstructure:"max_idle_conns"`      // 最大空闲连接数
-		ConnMaxIdleTime    int    `mapstructure:"conn_max_idle_time"`   // 连接最大空闲时间（分钟）
-		ConnMaxLifetime    int    `mapstructure:"conn_max_lifetime"`   // 连接最大生命周期（小时）
-		UseTLS             bool   `mapstructure:"use_tls"`             // 是否使用TLS加密连接
+		Addr            string `mapstructure:"addr"`               // Redis服务器地址，格式为"host:port"
+		Password        string `mapstructure:"password"`           // Redis密码，无密码时为空字符串
+		DB              int    `mapstructure:"db"`                 // Redis数据库索引
+		DialTimeout     int    `mapstructure:"dial_timeout"`       // 连接超时时间（秒）
+		ReadTimeout     int    `mapstructure:"read_timeout"`       // 读取超时时间（秒）
+		WriteTimeout    int    `mapstructure:"write_timeout"`      // 写入超时时间（秒）
+		PoolSize        int    `mapstructure:"pool_size"`          // 连接池大小
+		MinIdleConns    int    `mapstructure:"min_idle_conns"`     // 最小空闲连接数
+		MaxIdleConns    int    `mapstructure:"max_idle_conns"`     // 最大空闲连接数
+		ConnMaxIdleTime int    `mapstructure:"conn_max_idle_time"` // 连接最大空闲时间（分钟）
+		ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"`  // 连接最大生命周期（小时）
+		UseTLS          bool   `mapstructure:"use_tls"`            // 是否使用TLS加密连接
 	} `mapstructure:"redis"`
-	
 }
 
 var v = NewViper("config")
@@ -97,11 +97,12 @@ func InitConfig() {
 	v.SetDefault("app.port", 3000)
 	v.SetDefault("app.prefork", false)
 	v.SetDefault("app.swagger", false)
+	v.SetDefault("app.secret", "secret")
 	// 缓存默认配置
-	v.SetDefault("cache.driver", "bigcache")
-	v.SetDefault("cache.default_ttl", 3600)  // 默认1小时
-	v.SetDefault("cache.size", 10000)       // 默认10000个元素
-	v.SetDefault("cache.clean_window", 5)   // 默认5秒清理一次
+	v.SetDefault("cache.driver", "memory")
+	v.SetDefault("cache.default_ttl", 3600)         // 默认1小时
+	v.SetDefault("cache.size", 10000)               // 默认10000个元素
+	v.SetDefault("cache.clean_window", 5)           // 默认5秒清理一次
 	v.SetDefault("cache.hard_max_cache_size", 1024) // 默认1GB
 
 	// Redis默认配置

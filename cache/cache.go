@@ -2,114 +2,86 @@ package cache
 
 import (
 	"context"
-	"fmt"
-	"time"
+	"encoding/json"
 
-	"github.com/allegro/bigcache/v3"
 	"github.com/eko/gocache/lib/v4/cache"
-	bigcachestore "github.com/eko/gocache/store/bigcache/v4"
+	gostore "github.com/eko/gocache/lib/v4/store"
+	"github.com/wuwuseo/cmf/cache/driver"
 	"github.com/wuwuseo/cmf/config"
-	"github.com/wuwuseo/cmf/driver"
 )
 
-// CacheInterface 定义通用的缓存接口
-// 这里使用泛型来支持不同类型的值
-// T 表示缓存值的类型
-// 注意：为了简化，这里暂时只支持字符串类型的键和默认的缓存选项
-// 完整实现可以进一步扩展
-type CacheInterface[T any] interface {
-	Get(ctx context.Context, key string) (T, error)
-	Set(ctx context.Context, key string, value T) error
-	Delete(ctx context.Context, key string) error
-	Clear(ctx context.Context) error
-}
-
-// CacheConfig 缓存配置结构体
-type CacheConfig struct {
-	Driver          string        // 缓存驱动类型
-	DefaultTTL      int           // 默认缓存过期时间（秒）
-	Size            int           // 缓存大小
-	CleanWindow     int           // 清理窗口（秒）
-	HardMaxCacheSize int          // 最大缓存大小（MB）
-}
-
-// 全局缓存驱动管理器
-var manager = driver.NewManager[CacheInterface[[]byte], *CacheConfig]()
-
-// Cache 缓存结构体，实现CacheInterface接口
 type Cache[T any] struct {
 	*cache.Cache[T]
 }
 
-// 实现CacheInterface接口的方法
-func (c *Cache[T]) Get(ctx context.Context, key string) (T, error) {
-	return c.Cache.Get(ctx, key)
-}
+// NewCache 创建一个缓存实例，默认存储[]byte类型的数据
+func NewCache(ctx context.Context, cfg *config.Config) *Cache[[]byte] {
+	Driver := cfg.Cache.Driver
+	if Driver == "" {
+		panic("cache driver not found")
+	}
+	var store gostore.StoreInterface
+	switch Driver {
+	case "redis":
+		store = driver.NewRedisCache(ctx, cfg)
 
-func (c *Cache[T]) Set(ctx context.Context, key string, value T) error {
-	return c.Cache.Set(ctx, key, value)
-}
-
-func (c *Cache[T]) Delete(ctx context.Context, key string) error {
-	return c.Cache.Delete(ctx, key)
-}
-
-func (c *Cache[T]) Clear(ctx context.Context) error {
-	return c.Cache.Clear(ctx)
-}
-
-// NewCache 根据配置创建一个缓存实例
-// ctx 上下文
-// cfg 缓存配置
-// 返回缓存实例或错误
-func NewCache(ctx context.Context, cfg *CacheConfig) (CacheInterface[[]byte], error) {
-	return manager.Create(cfg.Driver, cfg)
-}
-
-// NewCacheFromConfig 根据配置创建缓存实例
-func NewCacheFromConfig(ctx context.Context, config *config.Config) (CacheInterface[[]byte], error) {
-	// 从配置中提取缓存配置
-	cacheConfig := &CacheConfig{
-		Driver:          config.Cache.Driver,
-		DefaultTTL:      config.Cache.DefaultTTL,
-		Size:            config.Cache.Size,
-		CleanWindow:     config.Cache.CleanWindow,
-		HardMaxCacheSize: config.Cache.HardMaxCacheSize,
+	case "memory":
+		store = driver.NewBigCache(ctx, cfg)
+	default:
+		panic("cache driver not found")
 	}
 
-	// 使用驱动管理器创建缓存实例
-	cacheInstance, err := manager.Create(cacheConfig.Driver, cacheConfig)
+	return &Cache[[]byte]{
+		Cache: cache.New[[]byte](store),
+	}
+}
+
+// TypedCache 提供类型安全的缓存操作
+// 通过JSON序列化和反序列化支持任意类型的数据
+type TypedCache[T any] struct {
+	rawCache *Cache[[]byte]
+}
+
+// NewTypedCache 创建一个指定类型的缓存实例
+func NewTypedCache[T any](rawCache *Cache[[]byte]) *TypedCache[T] {
+	return &TypedCache[T]{
+		rawCache: rawCache,
+	}
+}
+
+// Get 获取缓存中的值
+func (tc *TypedCache[T]) Get(ctx context.Context, key string) (T, error) {
+	// 获取原始的[]byte数据
+	data, err := tc.rawCache.Get(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("创建缓存实例失败: %w", err)
+		var zero T
+		return zero, err
 	}
-
-	return cacheInstance, nil
+	
+	// 将[]byte数据反序列化为目标类型
+	var value T
+	err = json.Unmarshal(data, &value)
+	return value, err
 }
 
-// 初始化函数，注册内置缓存驱动
-func init() {
-	// 注册bigcache驱动
-	manager.Register("bigcache", func(cfg *CacheConfig) (CacheInterface[[]byte], error) {
-		// 创建bigcache配置
-		bigcacheConfig := bigcache.DefaultConfig(time.Duration(cfg.DefaultTTL) * time.Second)
-		if cfg.CleanWindow > 0 {
-			bigcacheConfig.CleanWindow = time.Duration(cfg.CleanWindow) * time.Second
-		}
-		if cfg.HardMaxCacheSize > 0 {
-			bigcacheConfig.HardMaxCacheSize = cfg.HardMaxCacheSize
-		}
+// Set 设置缓存值
+func (tc *TypedCache[T]) Set(ctx context.Context, key string, value T) error {
+	// 将目标类型序列化为[]byte
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	
+	// 存储[]byte数据到原始缓存
+	return tc.rawCache.Set(ctx, key, data)
+}
 
-		// 创建bigcache客户端
-		ctx := context.Background()
-		bigcacheClient, err := bigcache.New(ctx, bigcacheConfig)
-		if err != nil {
-			return nil, fmt.Errorf("创建bigcache客户端失败: %w", err)
-		}
+// Delete 删除缓存中的值
+func (tc *TypedCache[T]) Delete(ctx context.Context, key string) error {
+	return tc.rawCache.Delete(ctx, key)
+}
 
-		// 创建缓存实例
-		bigcacheStore := bigcachestore.NewBigcache(bigcacheClient)
-		return &Cache[[]byte]{
-			Cache: cache.New[[]byte](bigcacheStore),
-		}, nil
-	})
+// Clear 清空所有缓存
+func (tc *TypedCache[T]) Clear(ctx context.Context) error {
+	return tc.rawCache.Clear(ctx)
 }

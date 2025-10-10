@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -34,24 +35,27 @@ type MiddlewareFunc func(app *fiber.App, config *config.Config)
 
 // Bootstrap 应用引导程序
 type Bootstrap struct {
+	ctx             context.Context
 	cleanupFuncs    []CleanupFunc
 	routeRegisters  []RouteRegisterFunc
 	initFuncs       []InitFunc
 	middlewareFuncs []MiddlewareFunc
-	services        map[string]any
+	services        sync.Map // 使用sync.Map保证并发安全
 }
 
 func NewBootstrap() *Bootstrap {
 	config.InitConfig()
 
 	b := &Bootstrap{
+		ctx:            context.Background(),
 		cleanupFuncs:   []CleanupFunc{},
 		routeRegisters: []RouteRegisterFunc{},
 		initFuncs:      []InitFunc{},
-		services:       make(map[string]any),
 	}
 	// 将配置注册为服务
 	b.RegisterService("config", config.NewConfig())
+	configService, _ := b.GetService("config")
+	b.RegisterService("cache", cache.NewCache(b.ctx, configService.(*config.Config)))
 	return b
 }
 
@@ -77,20 +81,20 @@ func (b *Bootstrap) RegisterMiddleware(f MiddlewareFunc) {
 
 // RegisterService 注册服务实例到容器中（单例模式）
 func (b *Bootstrap) RegisterService(name string, service any) {
-	b.services[name] = service
+	b.services.Store(name, service)
 }
 
 // GetService 从容器中获取服务实例
 // 如果服务不存在，返回nil和false
 func (b *Bootstrap) GetService(name string) (any, bool) {
-	service, exists := b.services[name]
+	service, exists := b.services.Load(name)
 	return service, exists
 }
 
 // GetServiceTyped 从容器中获取指定类型的服务实例
 // 提供类型安全的服务获取，使用泛型
 func GetServiceTyped[T any](b *Bootstrap, name string) (T, bool) {
-	service, exists := b.services[name]
+	service, exists := b.services.Load(name)
 	if !exists {
 		var zero T
 		return zero, false
@@ -108,7 +112,7 @@ func GetServiceTyped[T any](b *Bootstrap, name string) (T, bool) {
 // MustGetService 从容器中获取服务实例，如果服务不存在则panic
 // 适用于必须依赖该服务的场景
 func (b *Bootstrap) MustGetService(name string) any {
-	service, exists := b.services[name]
+	service, exists := b.services.Load(name)
 	if !exists {
 		panic(fmt.Sprintf("服务 '%s' 未注册", name))
 	}
@@ -117,7 +121,7 @@ func (b *Bootstrap) MustGetService(name string) any {
 
 // MustGetServiceTyped 从容器中获取指定类型的服务实例，如果服务不存在或类型不匹配则panic
 func MustGetServiceTyped[T any](b *Bootstrap, name string) T {
-	service, exists := b.services[name]
+	service, exists := b.services.Load(name)
 	if !exists {
 		panic(fmt.Sprintf("服务 '%s' 未注册", name))
 	}
@@ -132,14 +136,14 @@ func MustGetServiceTyped[T any](b *Bootstrap, name string) T {
 
 // HasService 检查服务是否已注册
 func (b *Bootstrap) HasService(name string) bool {
-	_, exists := b.services[name]
+	_, exists := b.services.Load(name)
 	return exists
 }
 
 // RemoveService 从容器中移除服务（谨慎使用）
 // 注意：单例模式下通常不建议移除服务，但在某些特殊场景可能有用
 func (b *Bootstrap) RemoveService(name string) {
-	delete(b.services, name)
+	b.services.Delete(name)
 }
 
 func (b *Bootstrap) Run() error {
@@ -221,16 +225,6 @@ func (b *Bootstrap) init() {
 	Config := MustGetServiceTyped[*config.Config](b, "config")
 	log.InitDefaultLogger(Config)
 	fiberlog.Info("执行初始化函数...")
-
-	// 初始化并注册缓存服务
-	fiberlog.Info("初始化缓存服务...")
-	cacheInstance, err := cache.NewCacheFromConfig(context.Background(), Config)
-	if err != nil {
-		fiberlog.Fatalf("缓存初始化失败: %v", err)
-	}
-	b.RegisterService("cache", cacheInstance)
-	fiberlog.Infof("缓存服务已注册，驱动类型: %s", Config.Cache.Driver)
-
 	// 执行所有注册的初始化函数
 	for _, initFunc := range b.initFuncs {
 		if err := initFunc(Config); err != nil {
