@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -14,6 +15,7 @@ import (
 // 这些选项将用于创建Redis连接
 type Options struct {
 	Addr            string        // Redis服务器地址，格式为"host:port"
+	Username        string        // Redis用户名，无用户名时为空字符串
 	Password        string        // Redis密码，无密码时为空字符串
 	DB              int           // Redis数据库索引
 	DialTimeout     time.Duration // 连接超时时间
@@ -27,11 +29,15 @@ type Options struct {
 	TLSConfig       *tls.Config   // TLS配置，用于加密连接
 }
 
+// 使用sync.Map来存储单例Redis客户端实例
+var clientMap sync.Map
+
 // NewClient 创建一个新的Redis客户端实例
 // 该函数封装了go-redis的NewClient函数，提供了更便捷的使用方式
 func NewClient(options *Options) *redis.Client {
 	redisOptions := &redis.Options{
 		Addr:            options.Addr,
+		Username:        options.Username,
 		Password:        options.Password,
 		DB:              options.DB,
 		DialTimeout:     options.DialTimeout,
@@ -48,14 +54,32 @@ func NewClient(options *Options) *redis.Client {
 }
 
 // NewClientFromConfig 从配置对象创建Redis客户端实例
-// 该函数使用应用的全局配置来初始化Redis客户端
-func NewClientFromConfig(ctx context.Context, config *config.Config) (*redis.Client, error) {
+// 该函数使用应用的全局配置来初始化Redis客户端，并使用sync.Map保持单例模式
+func NewClientFromConfig(ctx context.Context, config *config.Config, storeName ...string) (*redis.Client, error) {
 	// 从配置中获取Redis相关配置
-	redisConfig := config.Redis
+	// 处理存储名称参数
+	redisDefault := config.Redis.Default
+	var storeKey string
+	if len(storeName) > 0 {
+		storeKey = storeName[0]
+	} else {
+		storeKey = redisDefault
+	}
+
+	// 检查是否已经存在该storeName的客户端实例
+	if client, ok := clientMap.Load(storeKey); ok {
+		return client.(*redis.Client), nil
+	}
+
+	redisConfig, ok := config.Redis.Connections[storeKey]
+	if !ok {
+		return nil, fmt.Errorf("未找到Redis配置: %s", storeKey)
+	}
 
 	// 创建选项对象，使用配置中的值
 	options := &Options{
 		Addr:            redisConfig.Addr,
+		Username:        redisConfig.Username,
 		Password:        redisConfig.Password,
 		DB:              redisConfig.DB,
 		DialTimeout:     time.Duration(redisConfig.DialTimeout) * time.Second,
@@ -80,6 +104,14 @@ func NewClientFromConfig(ctx context.Context, config *config.Config) (*redis.Cli
 	// 测试连接
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("连接Redis失败: %w", err)
+	}
+
+	// 将客户端存储到sync.Map中，确保单例
+	actual, loaded := clientMap.LoadOrStore(storeKey, client)
+	if loaded {
+		// 如果已经存在，则关闭新创建的客户端，返回已存在的客户端
+		client.Close()
+		return actual.(*redis.Client), nil
 	}
 
 	return client, nil

@@ -11,6 +11,10 @@ import (
 )
 
 func NewBigCache(ctx context.Context, cfg *config.Config) gostore.StoreInterface {
-	bigcacheClient, _ := bigcache.New(ctx, bigcache.DefaultConfig(time.Duration(cfg.Cache.DefaultTTL)))
+	// 获取默认缓存存储配置
+	defaultStore := cfg.Cache.Default
+	storeConfig := cfg.Cache.Stores[defaultStore]
+	
+	bigcacheClient, _ := bigcache.New(ctx, bigcache.DefaultConfig(time.Duration(storeConfig.DefaultTTL)*time.Second))
 	return bigcachestore.NewBigcache(bigcacheClient)
 }

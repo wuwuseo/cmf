@@ -122,6 +122,8 @@ func InitConfig() {
 	v.SetDefault("cache.default", "memory")
 	v.SetDefault("cache.stores.memory.driver", "memory")
 	v.SetDefault("cache.stores.memory.default_ttl", 3600)
+	v.SetDefault("cache.stores.redis.driver", "redis")
+	v.SetDefault("cache.stores.redis.default_ttl", 3600)
 
 	// Redis默认配置
 	v.SetDefault("redis.default", "redis")

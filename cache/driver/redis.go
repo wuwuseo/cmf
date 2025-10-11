@@ -15,5 +15,10 @@ func NewRedisCache(ctx context.Context, cfg *config.Config) gostore.StoreInterfa
 	if err != nil {
 		panic(err)
 	}
-	return redisstore.NewRedis(client, gostore.WithExpiration(time.Duration(cfg.Cache.DefaultTTL)))
+	
+	// 获取默认缓存存储配置
+	defaultStore := cfg.Cache.Default
+	storeConfig := cfg.Cache.Stores[defaultStore]
+	
+	return redisstore.NewRedis(client, gostore.WithExpiration(time.Duration(storeConfig.DefaultTTL)*time.Second))
 }
