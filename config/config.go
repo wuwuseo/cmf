@@ -7,6 +7,33 @@ import (
 	"github.com/spf13/viper"
 )
 
+type Redis struct {
+	Addr            string `mapstructure:"addr"`               // Redis服务器地址，格式为"host:port"
+	Username        string `mapstructure:"username"`           // Redis用户名，无用户名时为空字符串
+	Password        string `mapstructure:"password"`           // Redis密码，无密码时为空字符串
+	DB              int    `mapstructure:"db"`                 // Redis数据库索引
+	DialTimeout     int    `mapstructure:"dial_timeout"`       // 连接超时时间（秒）
+	ReadTimeout     int    `mapstructure:"read_timeout"`       // 读取超时时间（秒）
+	WriteTimeout    int    `mapstructure:"write_timeout"`      // 写入超时时间（秒）
+	PoolSize        int    `mapstructure:"pool_size"`          // 连接池大小
+	MinIdleConns    int    `mapstructure:"min_idle_conns"`     // 最小空闲连接数
+	MaxIdleConns    int    `mapstructure:"max_idle_conns"`     // 最大空闲连接数
+	ConnMaxIdleTime int    `mapstructure:"conn_max_idle_time"` // 连接最大空闲时间（分钟）
+	ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"`  // 连接最大生命周期（小时）
+	UseTLS          bool   `mapstructure:"use_tls"`            // 是否使用TLS加密连接
+}
+
+type Database struct {
+	Driver      string `mapstructure:"driver"`
+	Host        string `mapstructure:"host"`
+	Port        int    `mapstructure:"port"`
+	User        string `mapstructure:"user"`
+	Password    string `mapstructure:"password"`
+	Name        string `mapstructure:"name"`
+	SSLMode     string `mapstructure:"ssl_mode"`
+	TablePrefix string `mapstructure:"table_prefix"`
+}
+
 type Config struct {
 	App struct {
 		Name        string `mapstructure:"name"`
@@ -28,40 +55,33 @@ type Config struct {
 	} `mapstructure:"log"`
 
 	Database struct {
-		Driver      string `mapstructure:"driver"`
-		Host        string `mapstructure:"host"`
-		Port        int    `mapstructure:"port"`
-		User        string `mapstructure:"user"`
-		Password    string `mapstructure:"password"`
-		Name        string `mapstructure:"name"`
-		SSLMode     string `mapstructure:"ssl_mode"`
-		TablePrefix string `mapstructure:"table_prefix"`
+		Default     string              `mapstructure:"default"`
+		Connections map[string]Database `mapstructure:"connections"`
 	} `mapstructure:"database"`
 
 	// 缓存配置
 	Cache struct {
-		Driver           string `mapstructure:"driver"`              // 缓存驱动类型，如 bigcache, memory
-		DefaultTTL       int    `mapstructure:"default_ttl"`         // 默认缓存过期时间（秒）
-		Size             int    `mapstructure:"size"`                // 缓存大小
-		CleanWindow      int    `mapstructure:"clean_window"`        // 清理窗口（秒）
-		HardMaxCacheSize int    `mapstructure:"hard_max_cache_size"` // 最大缓存大小（MB）
+		Default string `mapstructure:"default"` // 默认缓存存储
+		Stores  map[string]struct {
+			Driver     string `mapstructure:"driver"`      // 缓存驱动类型，如 bigcache, memory
+			DefaultTTL int    `mapstructure:"default_ttl"` // 默认缓存过期时间（秒）
+			Options    any    `mapstructure:"options"`     // 缓存驱动选项
+		} `mapstructure:"stores"`
 	} `mapstructure:"cache"`
 
-	// Redis配置
 	Redis struct {
-		Addr            string `mapstructure:"addr"`               // Redis服务器地址，格式为"host:port"
-		Password        string `mapstructure:"password"`           // Redis密码，无密码时为空字符串
-		DB              int    `mapstructure:"db"`                 // Redis数据库索引
-		DialTimeout     int    `mapstructure:"dial_timeout"`       // 连接超时时间（秒）
-		ReadTimeout     int    `mapstructure:"read_timeout"`       // 读取超时时间（秒）
-		WriteTimeout    int    `mapstructure:"write_timeout"`      // 写入超时时间（秒）
-		PoolSize        int    `mapstructure:"pool_size"`          // 连接池大小
-		MinIdleConns    int    `mapstructure:"min_idle_conns"`     // 最小空闲连接数
-		MaxIdleConns    int    `mapstructure:"max_idle_conns"`     // 最大空闲连接数
-		ConnMaxIdleTime int    `mapstructure:"conn_max_idle_time"` // 连接最大空闲时间（分钟）
-		ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"`  // 连接最大生命周期（小时）
-		UseTLS          bool   `mapstructure:"use_tls"`            // 是否使用TLS加密连接
+		Default     string           `mapstructure:"default"`
+		Connections map[string]Redis `mapstructure:"connections"`
 	} `mapstructure:"redis"`
+
+	Filesystem struct {
+		Default    string `mapstructure:"default"`
+		IsAndLocal bool   `mapstructure:"is_and_local"` // 是否同时存储在本地文件系统
+		Disks      map[string]struct {
+			Driver  string `mapstructure:"driver"`
+			Options any    `mapstructure:"options"`
+		} `mapstructure:"disks"`
+	} `mapstructure:"filesystem"`
 }
 
 var v = NewViper("config")
@@ -99,25 +119,25 @@ func InitConfig() {
 	v.SetDefault("app.swagger", false)
 	v.SetDefault("app.secret", "secret")
 	// 缓存默认配置
-	v.SetDefault("cache.driver", "memory")
-	v.SetDefault("cache.default_ttl", 3600)         // 默认1小时
-	v.SetDefault("cache.size", 10000)               // 默认10000个元素
-	v.SetDefault("cache.clean_window", 5)           // 默认5秒清理一次
-	v.SetDefault("cache.hard_max_cache_size", 1024) // 默认1GB
+	v.SetDefault("cache.default", "memory")
+	v.SetDefault("cache.stores.memory.driver", "memory")
+	v.SetDefault("cache.stores.memory.default_ttl", 3600)
 
 	// Redis默认配置
-	v.SetDefault("redis.addr", "localhost:6379")
-	v.SetDefault("redis.password", "")
-	v.SetDefault("redis.db", 0)
-	v.SetDefault("redis.dial_timeout", 5)
-	v.SetDefault("redis.read_timeout", 3)
-	v.SetDefault("redis.write_timeout", 3)
-	v.SetDefault("redis.pool_size", 10)
-	v.SetDefault("redis.min_idle_conns", 5)
-	v.SetDefault("redis.max_idle_conns", 10)
-	v.SetDefault("redis.conn_max_idle_time", 30)
-	v.SetDefault("redis.conn_max_lifetime", 24)
-	v.SetDefault("redis.use_tls", false)
+	v.SetDefault("redis.default", "redis")
+	v.SetDefault("redis.connections.redis.addr", "localhost:6379")
+	v.SetDefault("redis.connections.redis.username", "")
+	v.SetDefault("redis.connections.redis.password", "")
+	v.SetDefault("redis.connections.redis.db", 0)
+	v.SetDefault("redis.connections.redis.dial_timeout", 5)
+	v.SetDefault("redis.connections.redis.read_timeout", 3)
+	v.SetDefault("redis.connections.redis.write_timeout", 3)
+	v.SetDefault("redis.connections.redis.pool_size", 10)
+	v.SetDefault("redis.connections.redis.min_idle_conns", 5)
+	v.SetDefault("redis.connections.redis.max_idle_conns", 10)
+	v.SetDefault("redis.connections.redis.conn_max_idle_time", 30)
+	v.SetDefault("redis.connections.redis.conn_max_lifetime", 24)
+	v.SetDefault("redis.connections.redis.use_tls", false)
 	// 日志默认配置
 	v.SetDefault("log.console_output", true)
 	v.SetDefault("log.file_output", true)
@@ -125,14 +145,21 @@ func InitConfig() {
 	v.SetDefault("log.max_backups", 10)
 	v.SetDefault("log.max_age", 180)
 	v.SetDefault("log.file_path", "./data/logs/app.log")
-	v.SetDefault("database.driver", "mysql")
-	v.SetDefault("database.host", "localhost")
-	v.SetDefault("database.port", 3306)
-	v.SetDefault("database.user", "root")
-	v.SetDefault("database.password", "123456")
-	v.SetDefault("database.name", "cmf")
-	v.SetDefault("database.ssl_mode", "false")
-	v.SetDefault("database.table_prefix", "cmf_")
+	v.SetDefault("database.default", "default")
+	v.SetDefault("database.connections.default.driver", "mysql")
+	v.SetDefault("database.connections.default.host", "localhost")
+	v.SetDefault("database.connections.default.port", 3306)
+	v.SetDefault("database.connections.default.user", "root")
+	v.SetDefault("database.connections.default.password", "123456")
+	v.SetDefault("database.connections.default.name", "cmf")
+	v.SetDefault("database.connections.default.ssl_mode", "false")
+	v.SetDefault("database.connections.default.table_prefix", "cmf_")
+
+	v.SetDefault("filesystem.default", "local")
+	v.SetDefault("filesystem.is_and_local", false)
+	v.SetDefault("filesystem.disks.local.driver", "local")
+	v.SetDefault("filesystem.disks.local.options.root", "./data/storage")
+
 	v.ReadInConfig()
 }
 

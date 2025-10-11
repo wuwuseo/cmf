@@ -56,6 +56,7 @@ require (
 	github.com/gofiber/contrib/casbin v1.0.18
 	github.com/gofiber/contrib/fiberzap/v2 v2.1.6
 	github.com/gofiber/contrib/jwt v1.1.2
+	github.com/gofiber/storage v1.3.3
 	github.com/gofiber/swagger v1.1.1
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect

@@ -225,6 +225,14 @@ func (b *Bootstrap) init() {
 	Config := MustGetServiceTyped[*config.Config](b, "config")
 	log.InitDefaultLogger(Config)
 	fiberlog.Info("执行初始化函数...")
+	
+	// 初始化文件系统服务
+	filesystem, err := NewFilesystemFromConfig(Config)
+	if err != nil {
+		fiberlog.Fatalf("文件系统初始化失败: %v", err)
+	}
+	b.RegisterService("filesystem", filesystem)
+	
 	// 执行所有注册的初始化函数
 	for _, initFunc := range b.initFuncs {
 		if err := initFunc(Config); err != nil {
