@@ -17,7 +17,7 @@ func CreateToken(claims jwt.MapClaims, secret string) (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-func GetUserData(c *fiber.Ctx) jwt.MapClaims {
+func GetJWTUserData(c *fiber.Ctx) jwt.MapClaims {
 	user := c.Locals("user").(*jwt.Token)
 	claims := user.Claims.(jwt.MapClaims)
 	return claims
