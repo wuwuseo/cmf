@@ -159,6 +159,12 @@ func InitConfig() {
 	v.SetDefault("filesystem.is_and_local", false)
 	v.SetDefault("filesystem.disks.local.driver", "local")
 	v.SetDefault("filesystem.disks.local.options.root", "./data/storage")
+	v.SetDefault("filesystem.disks.s3.driver", "s3")
+	v.SetDefault("filesystem.disks.s3.options.access_key", "")
+	v.SetDefault("filesystem.disks.s3.options.secret_key", "")
+	v.SetDefault("filesystem.disks.s3.options.region", "")
+	v.SetDefault("filesystem.disks.s3.options.bucket", "")
+	v.SetDefault("filesystem.disks.s3.options.endpoint", "")
 
 	v.ReadInConfig()
 }
