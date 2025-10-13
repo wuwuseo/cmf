@@ -50,6 +50,18 @@ CMF 框架支持多种配置格式，包括 `.env` 文件和 YAML 格式。默�
 APP_NAME=app
 APP_DEBUG=false
 APP_PORT=3000
+APP_IDLE_TIMEOUT=60
+APP_PREFORK=false
+APP_SWAGGER=false
+APP_SECRET=secret
+
+# 日志配置
+LOG_FILE_PATH=./data/logs/app.log
+LOG_CONSOLE_OUTPUT=true
+LOG_FILE_OUTPUT=true
+LOG_MAX_SIZE=10
+LOG_MAX_BACKUPS=10
+LOG_MAX_AGE=180
 
 # 数据库配置
 DATABASE_DEFAULT=default
@@ -59,14 +71,43 @@ DATABASE_CONNECTIONS_DEFAULT_PORT=3306
 DATABASE_CONNECTIONS_DEFAULT_USER=root
 DATABASE_CONNECTIONS_DEFAULT_PASSWORD=123456
 DATABASE_CONNECTIONS_DEFAULT_NAME=cmf
+DATABASE_CONNECTIONS_DEFAULT_SSL_MODE=false
+DATABASE_CONNECTIONS_DEFAULT_TABLE_PREFIX=cmf_
+
+# 缓存配置
+CACHE_DEFAULT=memory
+CACHE_STORES_MEMORY_DRIVER=memory
+CACHE_STORES_MEMORY_DEFAULT_TTL=3600
+CACHE_STORES_REDIS_DRIVER=redis
+CACHE_STORES_REDIS_DEFAULT_TTL=3600
 
 # Redis 配置
 REDIS_DEFAULT=redis
 REDIS_CONNECTIONS_REDIS_ADDR=localhost:6379
+REDIS_CONNECTIONS_REDIS_USERNAME=
+REDIS_CONNECTIONS_REDIS_PASSWORD=
+REDIS_CONNECTIONS_REDIS_DB=0
+REDIS_CONNECTIONS_REDIS_DIAL_TIMEOUT=5
+REDIS_CONNECTIONS_REDIS_READ_TIMEOUT=3
+REDIS_CONNECTIONS_REDIS_WRITE_TIMEOUT=3
+REDIS_CONNECTIONS_REDIS_POOL_SIZE=10
+REDIS_CONNECTIONS_REDIS_MIN_IDLE_CONNS=5
+REDIS_CONNECTIONS_REDIS_MAX_IDLE_CONNS=10
+REDIS_CONNECTIONS_REDIS_CONN_MAX_IDLE_TIME=30
+REDIS_CONNECTIONS_REDIS_CONN_MAX_LIFETIME=24
+REDIS_CONNECTIONS_REDIS_USE_TLS=false
 
 # 文件系统配置
 FILESYSTEM_DEFAULT=local
 FILESYSTEM_IS_AND_LOCAL=false
+FILESYSTEM_DISKS_LOCAL_DRIVER=local
+FILESYSTEM_DISKS_LOCAL_OPTIONS_ROOT=./data/storage
+FILESYSTEM_DISKS_S3_DRIVER=s3
+FILESYSTEM_DISKS_S3_OPTIONS_ACCESS_KEY=
+FILESYSTEM_DISKS_S3_OPTIONS_SECRET_KEY=
+FILESYSTEM_DISKS_S3_OPTIONS_REGION=
+FILESYSTEM_DISKS_S3_OPTIONS_BUCKET=
+FILESYSTEM_DISKS_S3_OPTIONS_ENDPOINT=
 ```
 
 ### YAML 格式
@@ -74,8 +115,20 @@ FILESYSTEM_IS_AND_LOCAL=false
 ```yaml
 app:
   name: app
-  debug: false
   port: 3000
+  debug: false
+  idle_timeout: 60
+  prefork: false
+  swagger: false
+  secret: secret
+
+log:
+  file_path: ./data/logs/app.log
+  console_output: true
+  file_output: true
+  max_size: 10
+  max_backups: 10
+  max_age: 180
 
 database:
   default: default
@@ -85,14 +138,38 @@ database:
       host: localhost
       port: 3306
       user: root
-      password: "123456"
+      password: 123456
       name: cmf
+      ssl_mode: false
+      table_prefix: cmf_
+
+cache:
+  default: memory
+  stores:
+    memory:
+      driver: memory
+      default_ttl: 3600
+    redis:
+      driver: redis
+      default_ttl: 3600
 
 redis:
   default: redis
   connections:
     redis:
       addr: localhost:6379
+      username: ""
+      password: ""
+      db: 0
+      dial_timeout: 5
+      read_timeout: 3
+      write_timeout: 3
+      pool_size: 10
+      min_idle_conns: 5
+      max_idle_conns: 10
+      conn_max_idle_time: 30
+      conn_max_lifetime: 24
+      use_tls: false
 
 filesystem:
   default: local
@@ -147,11 +224,6 @@ if err != nil {
 value, err := cache.Get(context.Background(), "key")
 ```
 
-### 缓存存储切换示例
-
-请查看 [examples/cache_store_example.go](examples/cache_store_example.go) 了解如何使用新的 `Store` 方法在不同的缓存存储之间切换。
-
-`Store` 方法利用 `sync.Map` 来缓存已创建的存储实例，确保多次切换到同一存储时返回相同的实例，避免重复创建。这提高了性能并保持了一致性。
 
 ### JWT 认证
 
