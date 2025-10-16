@@ -1,0 +1,74 @@
+app:
+  name: app
+  port: 3000
+  debug: false
+  idle_timeout: 60
+  prefork: false
+  swagger: false
+  secret: secret
+
+log:
+  file_path: ./data/logs/app.log
+  console_output: true
+  file_output: true
+  max_size: 10
+  max_backups: 10
+  max_age: 180
+
+database:
+  default: default
+  connections:
+    default:
+      driver: mysql
+      host: localhost
+      port: 3306
+      user: root
+      password: 123456
+      name: cmf
+      ssl_mode: false
+      table_prefix: cmf_
+
+cache:
+  default: memory
+  stores:
+    memory:
+      driver: memory
+      default_ttl: 3600
+    redis:
+      driver: redis
+      default_ttl: 3600
+
+redis:
+  default: redis
+  connections:
+    redis:
+      addr: localhost:6379
+      username: ""
+      password: ""
+      db: 0
+      dial_timeout: 5
+      read_timeout: 3
+      write_timeout: 3
+      pool_size: 10
+      min_idle_conns: 5
+      max_idle_conns: 10
+      conn_max_idle_time: 30
+      conn_max_lifetime: 24
+      use_tls: false
+
+filesystem:
+  default: local
+  is_and_local: false
+  disks:
+    local:
+      driver: local
+      options:
+        root: ./data/storage
+    s3:
+      driver: s3
+      options:
+        access_key: ""
+        secret_key: ""
+        region: ""
+        bucket: ""
+        endpoint: ""
