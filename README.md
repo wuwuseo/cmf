@@ -1,6 +1,6 @@
-# CMF Framework
+# CMF Core
 
-CMF (Custom Modular Framework) 是一个基于 Go 语言开发的模块化 Web 应用框架，提供了配置管理、缓存、数据库、文件系统、JWT 认证、RBAC 权限控制等核心功能。
+CMF (Core) 是一个基于 Go 语言开发的模块化 Web 应用框架核心，提供了配置管理、缓存、数据库、文件系统、JWT 认证、RBAC 权限控制等核心功能。
 
 ## 特性
 
