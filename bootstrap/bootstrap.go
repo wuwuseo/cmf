@@ -258,19 +258,22 @@ func (b *Bootstrap) cleanup() error {
 }
 
 func (b *Bootstrap) setupRoutes(app *fiber.App) {
+
 	// 从服务中获取配置
 	Config := MustGetServiceTyped[*config.Config](b, "config")
-	// 注册默认路由
-	app.Get("/", func(c *fiber.Ctx) error {
-		return c.SendString("Hello world!")
-	})
-	//swagger
-	if Config.App.Swagger || Config.App.Debug {
-		app.Get("/swagger/*", swagger.HandlerDefault)
-	}
 
 	// 执行所有注册的路由函数
 	for _, routeRegister := range b.routeRegisters {
 		routeRegister(app, Config)
 	}
+	// 注册默认路由
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.SendString("Hello world! cmf!")
+	})
+
+	//swagger
+	if Config.App.Swagger || Config.App.Debug {
+		app.Get("/docs/swagger/*", swagger.HandlerDefault)
+	}
+
 }
