@@ -36,13 +36,14 @@ type Database struct {
 
 type Config struct {
 	App struct {
-		Name        string `mapstructure:"name"`
-		Port        int    `mapstructure:"port"`
-		Debug       bool   `mapstructure:"debug"`
-		IdleTimeout int    `mapstructure:"idle_timeout"`
-		Prefork     bool   `mapstructure:"prefork"`
-		Swagger     bool   `mapstructure:"swagger"`
-		Secret      string `mapstructure:"secret"`
+		Name         string `mapstructure:"name"`
+		Port         int    `mapstructure:"port"`
+		Debug        bool   `mapstructure:"debug"`
+		IdleTimeout  int    `mapstructure:"idle_timeout"`
+		Prefork      bool   `mapstructure:"prefork"`
+		Swagger      bool   `mapstructure:"swagger"`
+		Secret       string `mapstructure:"secret"`
+		LoginExpires int    `mapstructure:"login_expires"`
 	} `mapstructure:"app"`
 
 	Log struct {
@@ -97,7 +98,6 @@ func NewViperWithOptions(name string, envPrefix string) *viper.Viper {
 	// 初始化配置
 	Viper.SetEnvPrefix(envPrefix)
 	Viper.SetConfigName(name)
-	Viper.SetConfigType("yaml")
 	Viper.AddConfigPath("./config")
 	return Viper
 }
@@ -118,6 +118,7 @@ func InitConfig() {
 	v.SetDefault("app.prefork", false)
 	v.SetDefault("app.swagger", false)
 	v.SetDefault("app.secret", "secret")
+	v.SetDefault("app.login_expires", 60*60*24)
 	// 缓存默认配置
 	v.SetDefault("cache.default", "memory")
 	v.SetDefault("cache.stores.memory.driver", "memory")

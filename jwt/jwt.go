@@ -12,7 +12,7 @@ func NewJWTMiddleware(secret string) fiber.Handler {
 	})
 }
 
-func CreateToken(claims jwt.MapClaims, secret string) (string, error) {
+func CreateToken(claims jwt.Claims, secret string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
 }
