@@ -55,3 +55,8 @@ func GetDatabaseConfig(connectionName []string, config *config.Config) config.Da
 	}
 	return dbConfig
 }
+
+func GetTablePrefix(options ...string) string {
+	dbConfig := GetDatabaseConfig(options, config.Conf)
+	return dbConfig.TablePrefix
+}

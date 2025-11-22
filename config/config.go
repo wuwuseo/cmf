@@ -83,9 +83,26 @@ type Config struct {
 			Options any    `mapstructure:"options"`
 		} `mapstructure:"disks"`
 	} `mapstructure:"filesystem"`
+
+	Casbin struct {
+		DomainsDefault string `mapstructure:"domains_default"` // 默认域名称
+		Domains        []struct {
+			Name      string `mapstructure:"name"`       // 域名称
+			AutoLoad  bool   `mapstructure:"auto_load"`  // 是否自动加载
+			ModelPath string `mapstructure:"model_path"` // 模型文件路径
+			ModelText string `mapstructure:"model_text"` // 模型文本内容
+		} `mapstructure:"domains"` // 多域配置列表
+	} `mapstructure:"casbin"`
 }
 
-var v = NewViper("config")
+var v *viper.Viper
+var Conf *Config
+
+func init() {
+	initEnv()
+	v = NewViper("config")
+	Conf = NewConfig()
+}
 
 // NewViper 创建一个带有默认参数的 Viper 实例
 func NewViper(name string) *viper.Viper {
@@ -102,7 +119,87 @@ func NewViperWithOptions(name string, envPrefix string) *viper.Viper {
 	return Viper
 }
 
+func ReadConfig(callback func(v *viper.Viper)) {
+	if callback != nil {
+		v.AutomaticEnv()
+		callback(v)
+		v.ReadInConfig()
+	}
+}
+
 func InitConfig() {
+	ReadConfig(func(v *viper.Viper) {
+		v.SetDefault("app.name", "app")
+		v.SetDefault("app.debug", false)
+		v.SetDefault("app.idle_timeout", 60)
+		v.SetDefault("app.port", 3000)
+		v.SetDefault("app.prefork", false)
+		v.SetDefault("app.swagger", false)
+		v.SetDefault("app.secret", "secret")
+		v.SetDefault("app.login_expires", 60*60*24)
+		// 缓存默认配置
+		v.SetDefault("cache.default", "memory")
+		v.SetDefault("cache.stores.memory.driver", "memory")
+		v.SetDefault("cache.stores.memory.default_ttl", 3600)
+		v.SetDefault("cache.stores.redis.driver", "redis")
+		v.SetDefault("cache.stores.redis.default_ttl", 3600)
+
+		// Redis默认配置
+		v.SetDefault("redis.default", "redis")
+		v.SetDefault("redis.connections.redis.addr", "localhost:6379")
+		v.SetDefault("redis.connections.redis.username", "")
+		v.SetDefault("redis.connections.redis.password", "")
+		v.SetDefault("redis.connections.redis.db", 0)
+		v.SetDefault("redis.connections.redis.dial_timeout", 5)
+		v.SetDefault("redis.connections.redis.read_timeout", 3)
+		v.SetDefault("redis.connections.redis.write_timeout", 3)
+		v.SetDefault("redis.connections.redis.pool_size", 10)
+		v.SetDefault("redis.connections.redis.min_idle_conns", 5)
+		v.SetDefault("redis.connections.redis.max_idle_conns", 10)
+		v.SetDefault("redis.connections.redis.conn_max_idle_time", 30)
+		v.SetDefault("redis.connections.redis.conn_max_lifetime", 24)
+		v.SetDefault("redis.connections.redis.use_tls", false)
+		// 日志默认配置
+		v.SetDefault("log.console_output", true)
+		v.SetDefault("log.file_output", true)
+		v.SetDefault("log.max_size", "10")
+		v.SetDefault("log.max_backups", 10)
+		v.SetDefault("log.max_age", 180)
+		v.SetDefault("log.file_path", "./data/logs/app.log")
+		v.SetDefault("database.default", "default")
+		v.SetDefault("database.connections.default.driver", "mysql")
+		v.SetDefault("database.connections.default.host", "localhost")
+		v.SetDefault("database.connections.default.port", 3306)
+		v.SetDefault("database.connections.default.user", "root")
+		v.SetDefault("database.connections.default.password", "123456")
+		v.SetDefault("database.connections.default.name", "cmf")
+		v.SetDefault("database.connections.default.ssl_mode", "false")
+		v.SetDefault("database.connections.default.table_prefix", "cmf_")
+
+		v.SetDefault("filesystem.default", "local")
+		v.SetDefault("filesystem.is_and_local", false)
+		v.SetDefault("filesystem.disks.local.driver", "local")
+		v.SetDefault("filesystem.disks.local.options.root", "./data/storage")
+		v.SetDefault("filesystem.disks.s3.driver", "s3")
+		v.SetDefault("filesystem.disks.s3.options.access_key", "")
+		v.SetDefault("filesystem.disks.s3.options.secret_key", "")
+		v.SetDefault("filesystem.disks.s3.options.region", "")
+		v.SetDefault("filesystem.disks.s3.options.bucket", "")
+		v.SetDefault("filesystem.disks.s3.options.endpoint", "")
+
+		// Casbin默认配置
+		v.SetDefault("casbin.default", "default")
+		v.SetDefault("casbin.domains_default", "default")
+		// 添加默认域配置
+		defaultDomain := make(map[string]any)
+		defaultDomain["name"] = "default"
+		defaultDomain["auto_load"] = true
+		defaultDomain["model_path"] = "./config/rbac_model.conf"
+		v.SetDefault("casbin.domains", []map[string]any{defaultDomain})
+	})
+}
+
+func initEnv() {
 	filenames := []string{".env"}
 	if os.Getenv("CMF_APP_ENV") == "development" {
 		filenames = append(filenames, ".env.development")
@@ -110,92 +207,49 @@ func InitConfig() {
 		filenames = append(filenames, ".env.production")
 	}
 	godotenv.Load(filenames...)
-	v.AutomaticEnv()
-	v.SetDefault("app.name", "app")
-	v.SetDefault("app.debug", false)
-	v.SetDefault("app.idle_timeout", 60)
-	v.SetDefault("app.port", 3000)
-	v.SetDefault("app.prefork", false)
-	v.SetDefault("app.swagger", false)
-	v.SetDefault("app.secret", "secret")
-	v.SetDefault("app.login_expires", 60*60*24)
-	// 缓存默认配置
-	v.SetDefault("cache.default", "memory")
-	v.SetDefault("cache.stores.memory.driver", "memory")
-	v.SetDefault("cache.stores.memory.default_ttl", 3600)
-	v.SetDefault("cache.stores.redis.driver", "redis")
-	v.SetDefault("cache.stores.redis.default_ttl", 3600)
-
-	// Redis默认配置
-	v.SetDefault("redis.default", "redis")
-	v.SetDefault("redis.connections.redis.addr", "localhost:6379")
-	v.SetDefault("redis.connections.redis.username", "")
-	v.SetDefault("redis.connections.redis.password", "")
-	v.SetDefault("redis.connections.redis.db", 0)
-	v.SetDefault("redis.connections.redis.dial_timeout", 5)
-	v.SetDefault("redis.connections.redis.read_timeout", 3)
-	v.SetDefault("redis.connections.redis.write_timeout", 3)
-	v.SetDefault("redis.connections.redis.pool_size", 10)
-	v.SetDefault("redis.connections.redis.min_idle_conns", 5)
-	v.SetDefault("redis.connections.redis.max_idle_conns", 10)
-	v.SetDefault("redis.connections.redis.conn_max_idle_time", 30)
-	v.SetDefault("redis.connections.redis.conn_max_lifetime", 24)
-	v.SetDefault("redis.connections.redis.use_tls", false)
-	// 日志默认配置
-	v.SetDefault("log.console_output", true)
-	v.SetDefault("log.file_output", true)
-	v.SetDefault("log.max_size", "10")
-	v.SetDefault("log.max_backups", 10)
-	v.SetDefault("log.max_age", 180)
-	v.SetDefault("log.file_path", "./data/logs/app.log")
-	v.SetDefault("database.default", "default")
-	v.SetDefault("database.connections.default.driver", "mysql")
-	v.SetDefault("database.connections.default.host", "localhost")
-	v.SetDefault("database.connections.default.port", 3306)
-	v.SetDefault("database.connections.default.user", "root")
-	v.SetDefault("database.connections.default.password", "123456")
-	v.SetDefault("database.connections.default.name", "cmf")
-	v.SetDefault("database.connections.default.ssl_mode", "false")
-	v.SetDefault("database.connections.default.table_prefix", "cmf_")
-
-	v.SetDefault("filesystem.default", "local")
-	v.SetDefault("filesystem.is_and_local", false)
-	v.SetDefault("filesystem.disks.local.driver", "local")
-	v.SetDefault("filesystem.disks.local.options.root", "./data/storage")
-	v.SetDefault("filesystem.disks.s3.driver", "s3")
-	v.SetDefault("filesystem.disks.s3.options.access_key", "")
-	v.SetDefault("filesystem.disks.s3.options.secret_key", "")
-	v.SetDefault("filesystem.disks.s3.options.region", "")
-	v.SetDefault("filesystem.disks.s3.options.bucket", "")
-	v.SetDefault("filesystem.disks.s3.options.endpoint", "")
-
-	v.ReadInConfig()
 }
 
 func NewConfig() *Config {
+	InitConfig()
 	c := &Config{}
 	// 将配置绑定到结构体
 	v.Unmarshal(c)
 	return c
 }
 
-func (c *Config) GetString(key string) string {
+func GetString(key string) string {
 	return v.GetString(key)
 }
 
-func (c *Config) GetInt(key string) int {
+func GetInt(key string) int {
 	return v.GetInt(key)
 }
 
-func (c *Config) GetBool(key string) bool {
+func GetBool(key string) bool {
 	return v.GetBool(key)
 }
 
+func (c *Config) GetString(key string) string {
+	return GetString(key)
+}
+
+func (c *Config) GetInt(key string) int {
+	return GetInt(key)
+}
+
+func (c *Config) GetBool(key string) bool {
+	return GetBool(key)
+}
+
 func (c *Config) SaveConfig(section string, key string, value any, defaultValue any) error {
+	return SaveConfig(v, section, key, value, defaultValue)
+}
+
+func SaveConfig(viper *viper.Viper, section string, key string, value any, defaultValue any) error {
 	// 读取现有配置
 	var config map[string]any
-	v.SetEnvKeyReplacer(nil)
-	err := v.Unmarshal(&config)
+	viper.SetEnvKeyReplacer(nil)
+	err := viper.Unmarshal(&config)
 	if err != nil {
 		return err
 	}
@@ -222,8 +276,8 @@ func (c *Config) SaveConfig(section string, key string, value any, defaultValue 
 	sectionMap[key] = value
 
 	// 将更新后的配置写回文件
-	v.Set(section, config[section])
-	if err := v.WriteConfig(); err != nil {
+	viper.Set(section, config[section])
+	if err := viper.WriteConfig(); err != nil {
 		return err
 	}
 

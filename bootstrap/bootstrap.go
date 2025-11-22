@@ -45,8 +45,6 @@ type Bootstrap struct {
 }
 
 func NewBootstrap() *Bootstrap {
-	config.InitConfig()
-
 	b := &Bootstrap{
 		ctx:            context.Background(),
 		cleanupFuncs:   []CleanupFunc{},
@@ -54,7 +52,7 @@ func NewBootstrap() *Bootstrap {
 		initFuncs:      []InitFunc{},
 	}
 	// 将配置注册为服务
-	b.RegisterService("config", config.NewConfig())
+	b.RegisterService("config", config.Conf)
 	configService, _ := b.GetService("config")
 	// 初始化缓存服务
 	b.RegisterService("cache", cache.NewCache(b.ctx, configService.(*config.Config)))
