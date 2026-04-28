@@ -17,6 +17,7 @@ require (
 	github.com/gofiber/storage/s3/v2 v2.4.1
 	github.com/gofiber/swagger v1.1.1
 	github.com/golang-jwt/jwt/v5 v5.3.0
+	github.com/google/wire v0.7.0
 	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.16.0
 	github.com/spf13/viper v1.21.0

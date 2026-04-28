@@ -5,12 +5,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/eko/gocache/lib/v4/cache"
 	gostore "github.com/eko/gocache/lib/v4/store"
+	"github.com/google/wire"
 	"github.com/wuwuseo/cmf/cache/driver"
 	"github.com/wuwuseo/cmf/config"
 )
+
+// ProviderSet 缓存模块的 Wire Provider 集合
+var ProviderSet = wire.NewSet(NewCache)
 
 type Cache[T any] struct {
 	ctx context.Context
@@ -130,6 +135,18 @@ func (tc *TypedCache[T]) Set(ctx context.Context, key string, value T) error {
 
 	// 存储[]byte数据到原始缓存
 	return tc.rawCache.Set(ctx, key, data)
+}
+
+// SetWithExpiration 设置带过期时间的缓存值
+func (tc *TypedCache[T]) SetWithExpiration(ctx context.Context, key string, value T, ttl time.Duration) error {
+	// 将目标类型序列化为[]byte
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+
+	// 存储[]byte数据到原始缓存，带过期时间
+	return tc.rawCache.Set(ctx, key, data, gostore.WithExpiration(ttl))
 }
 
 // Delete 删除缓存中的值

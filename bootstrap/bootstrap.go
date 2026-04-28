@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	fiberlog "github.com/gofiber/fiber/v2/log"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
@@ -20,6 +19,7 @@ import (
 	"github.com/wuwuseo/cmf/config"
 	"github.com/wuwuseo/cmf/filesystem"
 	"github.com/wuwuseo/cmf/log"
+	"go.uber.org/zap"
 )
 
 // CleanupFunc 定义清理函数的类型
@@ -54,12 +54,14 @@ func NewBootstrap() *Bootstrap {
 	// 将配置注册为服务
 	b.RegisterService("config", config.Conf)
 	configService, _ := b.GetService("config")
+	cfg := configService.(*config.Config)
+
 	// 初始化缓存服务
-	b.RegisterService("cache", cache.NewCache(b.ctx, configService.(*config.Config)))
+	b.RegisterService("cache", cache.NewCache(b.ctx, cfg))
 	// 初始化文件系统服务
-	filesystem, err := filesystem.NewFilesystemFromConfig(configService.(*config.Config))
+	filesystem, err := filesystem.NewFilesystemFromConfig(cfg)
 	if err != nil {
-		fiberlog.Fatalf("文件系统初始化失败: %v", err)
+		log.Fatal("文件系统初始化失败", zap.Error(err))
 	}
 	b.RegisterService("filesystem", filesystem)
 	return b
@@ -158,10 +160,11 @@ func (b *Bootstrap) Run() error {
 	// 从服务中获取配置
 	Config := MustGetServiceTyped[*config.Config](b, "config")
 	// 记录应用启动信息
-	fiberlog.Infof("应用启动中... 程序：%s 端口：%d (Debug: %v)",
-		Config.App.Name,
-		Config.App.Port,
-		Config.App.Debug)
+	log.Info("应用启动中...",
+		zap.String("program", Config.App.Name),
+		zap.Int("port", Config.App.Port),
+		zap.Bool("debug", Config.App.Debug),
+	)
 
 	app := fiber.New(fiber.Config{
 		IdleTimeout: time.Duration(Config.App.IdleTimeout) * time.Second,
@@ -197,7 +200,7 @@ func (b *Bootstrap) Run() error {
 	// Listen from a different goroutine
 	go func() {
 		if err := app.Listen(":" + fmt.Sprint(Config.App.Port)); err != nil {
-			fiberlog.Panic(err)
+			log.Fatal("监听端口失败", zap.Error(err))
 		}
 	}()
 
@@ -206,11 +209,11 @@ func (b *Bootstrap) Run() error {
 
 	<-c
 	// 添加一些调试日志，验证日志是否正常工作
-	fiberlog.Warn("Running cleanup tasks...")
+	log.Warn("Running cleanup tasks...")
 	if err := b.cleanup(); err != nil {
-		fiberlog.Error("Cleanup failed: " + err.Error())
+		log.Error("Cleanup failed: " + err.Error())
 	}
-	fiberlog.Warn("Fiber was successful shutdown.")
+	log.Warn("Fiber was successful shutdown.")
 	return nil
 }
 
@@ -218,27 +221,26 @@ func (b *Bootstrap) Run() error {
 func (b *Bootstrap) loadMiddlewares(app *fiber.App) {
 	// 从服务中获取配置
 	Config := MustGetServiceTyped[*config.Config](b, "config")
-	fiberlog.Info("加载中间件...")
+	log.Info("加载中间件...")
 	for _, middlewareFunc := range b.middlewareFuncs {
 		middlewareFunc(app, Config)
 	}
-	fiberlog.Info("所有中间件加载完成")
+	log.Info("所有中间件加载完成")
 }
 
 // init 执行所有注册的初始化函数
 func (b *Bootstrap) init() {
 	// 从服务中获取配置
 	Config := MustGetServiceTyped[*config.Config](b, "config")
-	log.InitDefaultLogger(Config)
-	fiberlog.Info("执行初始化函数...")
+	log.Info("执行初始化函数...")
 
 	// 执行所有注册的初始化函数
 	for _, initFunc := range b.initFuncs {
 		if err := initFunc(Config); err != nil {
-			fiberlog.Fatalf("初始化失败: %v", err)
+			log.Fatal("初始化失败", zap.Error(err))
 		}
 	}
-	fiberlog.Info("所有初始化函数执行完成")
+	log.Info("所有初始化函数执行完成")
 }
 
 /**

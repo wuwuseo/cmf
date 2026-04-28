@@ -24,14 +24,18 @@ type Redis struct {
 }
 
 type Database struct {
-	Driver      string `mapstructure:"driver"`
-	Host        string `mapstructure:"host"`
-	Port        int    `mapstructure:"port"`
-	User        string `mapstructure:"user"`
-	Password    string `mapstructure:"password"`
-	Name        string `mapstructure:"name"`
-	SSLMode     string `mapstructure:"ssl_mode"`
-	TablePrefix string `mapstructure:"table_prefix"`
+	Driver          string `mapstructure:"driver"`
+	Host            string `mapstructure:"host"`
+	Port            int    `mapstructure:"port"`
+	User            string `mapstructure:"user"`
+	Password        string `mapstructure:"password"`
+	Name            string `mapstructure:"name"`
+	SSLMode         string `mapstructure:"ssl_mode"`
+	TablePrefix     string `mapstructure:"table_prefix"`
+	MaxOpenConns    int    `mapstructure:"max_open_conns"`
+	MaxIdleConns    int    `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime int    `mapstructure:"conn_max_idle_time"`
 }
 
 type Config struct {
@@ -48,6 +52,8 @@ type Config struct {
 	} `mapstructure:"app"`
 
 	Log struct {
+		Level         string `mapstructure:"level"`
+		Format        string `mapstructure:"format"`
 		FilePath      string `mapstructure:"file_path"`
 		ConsoleOutput bool   `mapstructure:"console_output"`
 		FileOutput    bool   `mapstructure:"file_output"`
@@ -162,6 +168,8 @@ func InitConfig() {
 		v.SetDefault("redis.connections.redis.conn_max_lifetime", 24)
 		v.SetDefault("redis.connections.redis.use_tls", false)
 		// 日志默认配置
+		v.SetDefault("log.level", "info")
+		v.SetDefault("log.format", "json")
 		v.SetDefault("log.console_output", true)
 		v.SetDefault("log.file_output", true)
 		v.SetDefault("log.max_size", "10")
@@ -177,6 +185,10 @@ func InitConfig() {
 		v.SetDefault("database.connections.default.name", "cmf")
 		v.SetDefault("database.connections.default.ssl_mode", "false")
 		v.SetDefault("database.connections.default.table_prefix", "cmf_")
+		v.SetDefault("database.connections.default.max_open_conns", 25)
+		v.SetDefault("database.connections.default.max_idle_conns", 10)
+		v.SetDefault("database.connections.default.conn_max_lifetime", 3600)
+		v.SetDefault("database.connections.default.conn_max_idle_time", 600)
 
 		v.SetDefault("filesystem.default", "local")
 		v.SetDefault("filesystem.is_and_local", false)
