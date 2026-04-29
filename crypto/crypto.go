@@ -2,9 +2,20 @@ package crypto
 
 import (
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
+	"fmt"
+	"sync"
 
 	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	privateKey *rsa.PrivateKey
+	publicKey  *rsa.PublicKey
+	once       sync.Once
 )
 
 // HashPassword 使用 bcrypt 算法和随机盐值对密码进行加密
@@ -76,4 +87,81 @@ func VerifyPassword(password, hashedPassword, salt string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+// InitRSAKeys 初始化RSA密钥对（单例模式）
+func InitRSAKeys() error {
+	var err error
+	once.Do(func() {
+		privateKey, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return
+		}
+		publicKey = &privateKey.PublicKey
+	})
+	return err
+}
+
+// GetPublicKeyPEM 获取公钥的PEM格式字符串
+func GetPublicKeyPEM() (string, error) {
+	if publicKey == nil {
+		if err := InitRSAKeys(); err != nil {
+			return "", err
+		}
+	}
+
+	pubASN1, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return "", err
+	}
+
+	pubPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubASN1,
+	})
+
+	return string(pubPEM), nil
+}
+
+// DecryptData 使用私钥解密数据（Base64编码的密文）
+func DecryptData(encryptedBase64 string) (string, error) {
+	if privateKey == nil {
+		if err := InitRSAKeys(); err != nil {
+			return "", err
+		}
+	}
+
+	// 解码Base64
+	encryptedData, err := base64.StdEncoding.DecodeString(encryptedBase64)
+	if err != nil {
+		return "", fmt.Errorf("base64 decode error: %w", err)
+	}
+
+	// 解密数据
+	decryptedData, err := rsa.DecryptPKCS1v15(rand.Reader, privateKey, encryptedData)
+	if err != nil {
+		return "", fmt.Errorf("rsa decrypt error: %w", err)
+	}
+
+	return string(decryptedData), nil
+}
+
+// GetPrivateKey 获取私钥（用于测试或其他用途）
+func GetPrivateKey() *rsa.PrivateKey {
+	if privateKey == nil {
+		if err := InitRSAKeys(); err != nil {
+			return nil
+		}
+	}
+	return privateKey
+}
+
+// GetPublicKey 获取公钥
+func GetPublicKey() *rsa.PublicKey {
+	if publicKey == nil {
+		if err := InitRSAKeys(); err != nil {
+			return nil
+		}
+	}
+	return publicKey
 }
