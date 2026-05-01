@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -138,7 +139,7 @@ func DecryptData(encryptedBase64 string) (string, error) {
 	}
 
 	// 解密数据
-	decryptedData, err := rsa.DecryptPKCS1v15(rand.Reader, privateKey, encryptedData)
+	decryptedData, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, privateKey, encryptedData, nil)
 	if err != nil {
 		return "", fmt.Errorf("rsa decrypt error: %w", err)
 	}

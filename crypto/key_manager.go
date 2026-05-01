@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -72,7 +73,7 @@ func (km *KeyManager) generateKey() {
 	}
 
 	// 生成密钥ID
-	keyID := fmt.Sprintf("rsa-%d", time.Now().Unix())
+	keyID := fmt.Sprintf("my-key-%d", time.Now().Unix())
 	now := time.Now()
 
 	// 创建密钥版本
@@ -134,7 +135,7 @@ func (km *KeyManager) DecryptData(keyID, encryptedBase64 string) (string, error)
 	}
 
 	// 解密数据
-	decryptedData, err := rsa.DecryptPKCS1v15(rand.Reader, keyVersion.PrivateKey, encryptedData)
+	decryptedData, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, keyVersion.PrivateKey, encryptedData, nil)
 	if err != nil {
 		return "", fmt.Errorf("rsa decrypt error: %w", err)
 	}
