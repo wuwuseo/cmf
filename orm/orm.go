@@ -121,6 +121,9 @@ func GetDatabaseConfig(connectionName []string, config *config.Config) config.Da
 }
 
 func GetTablePrefix(options ...string) string {
+	if config.Conf == nil {
+		return ""
+	}
 	dbConfig := GetDatabaseConfig(options, config.Conf)
 	return dbConfig.TablePrefix
 }
