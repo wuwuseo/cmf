@@ -121,6 +121,10 @@ func (s *Storage) SetWithContext(ctx context.Context, key string, val []byte, ex
 
 	// 写入原始数据文件
 	filePath := s.getFilePath(key)
+	// 确保父目录存在
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
 	if err := os.WriteFile(filePath, val, 0644); err != nil {
 		return err
 	}
