@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/requestid"
-	"github.com/gofiber/swagger"
+	"github.com/gofiber/contrib/v3/swaggerui"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
+	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
 	"github.com/wuwuseo/cmf/cache"
 	"github.com/wuwuseo/cmf/config"
 	"github.com/wuwuseo/cmf/filesystem"
@@ -26,13 +26,13 @@ import (
 type CleanupFunc func() error
 
 // RouteRegisterFunc 定义路由注册函数的类型
-type RouteRegisterFunc func(app *fiber.App, config *config.Config)
+type RouteRegisterFunc func(app *fiber.App, cfg *config.Config)
 
 // InitFunc 定义初始化函数的类型
 type InitFunc func(config *config.Config) error
 
 // MiddlewareFunc 定义中间件注册函数的类型
-type MiddlewareFunc func(app *fiber.App, config *config.Config)
+type MiddlewareFunc func(app *fiber.App, cfg *config.Config)
 
 // Bootstrap 应用引导程序
 type Bootstrap struct {
@@ -166,9 +166,13 @@ func (b *Bootstrap) Run() error {
 		zap.Bool("debug", Config.App.Debug),
 	)
 
+	// 构建 Fiber 服务列表，注册到 cfg.Services 以启用生命周期管理
+	serviceList := b.buildServiceList(Config)
+
 	app := fiber.New(fiber.Config{
 		IdleTimeout: time.Duration(Config.App.IdleTimeout) * time.Second,
-		ErrorHandler: func(ctx *fiber.Ctx, err error) error {
+		BodyLimit:   Config.App.BodyLimit,
+		ErrorHandler: func(ctx fiber.Ctx, err error) error {
 			// Status code defaults to 500
 			code := fiber.StatusInternalServerError
 
@@ -188,18 +192,43 @@ func (b *Bootstrap) Run() error {
 			// Return from handler
 			return nil
 		},
+		// 注册 Fiber v3 服务，框架自动调用 Start/Terminate
+		Services: serviceList,
 	})
+
+	// 将 CMF 内部服务同步到 Fiber State，支持 fiber.GetService/MustGetService
+	b.syncServicesToState(app)
+
 	app.Use(
 		recover.New(),
-		logger.New(),
+		compress.New(),
 		requestid.New(),
 	)
 	b.loadMiddlewares(app)
 	b.setupRoutes(app)
 
-	// Listen from a different goroutine
+	// 注册 Fiber v3 Hooks 进行生命周期管理
+	app.Hooks().OnPreShutdown(func() error {
+		log.Warn("应用准备关闭，执行清理任务...")
+		return b.cleanup()
+	})
+
+	app.Hooks().OnPostShutdown(func(err error) error {
+		if err != nil {
+			log.Error("应用关闭失败: " + err.Error())
+		} else {
+			log.Warn("Fiber 已成功关闭")
+		}
+		return nil
+	})
+
+	// v3 要求在 goroutine 中运行 Listen，以支持 Hooks
 	go func() {
-		if err := app.Listen(":" + fmt.Sprint(Config.App.Port)); err != nil {
+		listenAddr := ":" + fmt.Sprint(Config.App.Port)
+		listenCfg := fiber.ListenConfig{
+			EnablePrefork: Config.App.Prefork,
+		}
+		if err := app.Listen(listenAddr, listenCfg); err != nil {
 			log.Fatal("监听端口失败", zap.Error(err))
 		}
 	}()
@@ -208,12 +237,10 @@ func (b *Bootstrap) Run() error {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
 	<-c
-	// 添加一些调试日志，验证日志是否正常工作
-	log.Warn("Running cleanup tasks...")
-	if err := b.cleanup(); err != nil {
-		log.Error("Cleanup failed: " + err.Error())
+	// 触发 Fiber 优雅关闭（会依次调用 OnPreShutdown → 服务 Terminate → OnPostShutdown）
+	if err := app.Shutdown(); err != nil {
+		log.Error("关闭失败: " + err.Error())
 	}
-	log.Warn("Fiber was successful shutdown.")
 	return nil
 }
 
@@ -243,6 +270,58 @@ func (b *Bootstrap) init() {
 	log.Info("所有初始化函数执行完成")
 }
 
+// buildServiceList 构建 Fiber v3 Service 列表，注册需要生命周期管理的服务
+func (b *Bootstrap) buildServiceList(cfg *config.Config) []fiber.Service {
+	var services []fiber.Service
+
+	// 从 sync.Map 中提取所有注册的服务，包装为 fiber.Service
+	b.services.Range(func(key, value any) bool {
+		name := key.(string)
+		services = append(services, &cmfServiceWrapper{
+			name:    name,
+			service: value,
+		})
+		return true
+	})
+
+	return services
+}
+
+// cmfServiceWrapper 将 CMF 服务包装为 fiber.Service 接口
+// 提供统一的 Start / String / State / Terminate 实现
+type cmfServiceWrapper struct {
+	name    string
+	service any
+}
+
+func (w *cmfServiceWrapper) Start(ctx context.Context) error {
+	log.Info("服务启动: " + w.name)
+	return nil
+}
+
+func (w *cmfServiceWrapper) String() string {
+	return w.name
+}
+
+func (w *cmfServiceWrapper) State(ctx context.Context) (string, error) {
+	return "running", nil
+}
+
+func (w *cmfServiceWrapper) Terminate(ctx context.Context) error {
+	log.Info("服务终止: " + w.name)
+	return nil
+}
+
+// syncServicesToState 将 CMF 内部服务同步到 Fiber 的 State，
+// 以便在中间件/handler 中通过 app.State().Get(name) 或 c.App().State().Get(name) 检索
+func (b *Bootstrap) syncServicesToState(app *fiber.App) {
+	b.services.Range(func(key, value any) bool {
+		name := key.(string)
+		app.State().Set(name, value)
+		return true
+	})
+}
+
 /**
  * @description: 清理资源
  * @return {*}
@@ -267,13 +346,17 @@ func (b *Bootstrap) setupRoutes(app *fiber.App) {
 		routeRegister(app, Config)
 	}
 	// 注册默认路由
-	app.Get("/", func(c *fiber.Ctx) error {
+	app.Get("/", func(c fiber.Ctx) error {
 		return c.SendString("Hello world! cmf!")
 	})
 
-	//swagger
+	// Swagger UI（v3 使用 swaggerui 中间件）
 	if Config.App.Swagger || Config.App.Debug {
-		app.Get("/docs/swagger/*", swagger.HandlerDefault)
+		app.Use(swaggerui.New(swaggerui.Config{
+			BasePath: "/",
+			FilePath: "./docs/swagger.json",
+			Path:     "docs",
+		}))
 	}
 
 }

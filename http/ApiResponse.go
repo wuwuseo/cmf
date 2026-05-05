@@ -1,14 +1,14 @@
 package http
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 type ApiResponse struct {
-	Ctx *fiber.Ctx
+	Ctx fiber.Ctx
 }
 
-func NewApiResponse(ctx *fiber.Ctx) *ApiResponse {
+func NewApiResponse(ctx fiber.Ctx) *ApiResponse {
 	return &ApiResponse{Ctx: ctx}
 }
 

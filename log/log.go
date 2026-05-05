@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gofiber/contrib/fiberzap/v2"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/log"
+	zapmiddleware "github.com/gofiber/contrib/v3/zap"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/log"
 	"github.com/google/wire"
 	"github.com/wuwuseo/cmf/config"
 	"go.uber.org/zap"
@@ -219,7 +219,7 @@ func NewLoggerFromConfig(cfg LogConfig) Logger {
 
 // RequestLoggerMiddleware 返回一个 Fiber 中间件，记录每个请求的信息
 func RequestLoggerMiddleware(logger Logger) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		start := time.Now()
 		err := c.Next()
 		duration := time.Since(start)
@@ -263,7 +263,7 @@ func InitLogger(debug bool, consoleOutput bool, fileOutput bool, logFilePath str
 
 	// 同时设置 Fiber 的日志记录器以保持兼容
 	zapL := logger.(*zapLogger).Zap()
-	fiberZap := fiberzap.NewLogger(fiberzap.LoggerConfig{
+	fiberZap := zapmiddleware.NewLogger(zapmiddleware.LoggerConfig{
 		SetLogger: zapL,
 	})
 	log.SetLogger(fiberZap)
@@ -277,7 +277,7 @@ func InitDefaultLogger(cfg *config.Config) {
 
 	// 同时设置 Fiber 的日志记录器以保持兼容
 	zapL := logger.(*zapLogger).Zap()
-	fiberZap := fiberzap.NewLogger(fiberzap.LoggerConfig{
+	fiberZap := zapmiddleware.NewLogger(zapmiddleware.LoggerConfig{
 		SetLogger: zapL,
 	})
 	log.SetLogger(fiberZap)

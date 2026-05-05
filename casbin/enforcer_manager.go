@@ -7,7 +7,7 @@ import (
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
-	fiberlog "github.com/gofiber/fiber/v2/log"
+	fiberlog "github.com/gofiber/fiber/v3/log"
 )
 
 // DomainConfig 域配置

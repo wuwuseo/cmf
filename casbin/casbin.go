@@ -4,8 +4,8 @@ import (
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
 	"github.com/casbin/casbin/v2/persist"
-	gofibercasbin "github.com/gofiber/contrib/casbin"
-	"github.com/gofiber/fiber/v2/log"
+	gofibercasbin "github.com/gofiber/contrib/v3/casbin"
+	"github.com/gofiber/fiber/v3/log"
 	"github.com/wuwuseo/cmf/config"
 )
 

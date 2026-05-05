@@ -1,8 +1,8 @@
 package jwt
 
 import (
-	jwtware "github.com/gofiber/contrib/jwt"
-	"github.com/gofiber/fiber/v2"
+	jwtware "github.com/gofiber/contrib/v3/jwt"
+	"github.com/gofiber/fiber/v3"
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -17,7 +17,7 @@ func CreateToken(claims jwt.Claims, secret string) (string, error) {
 	return token.SignedString([]byte(secret))
 }
 
-func GetJWTUserData(c *fiber.Ctx) jwt.MapClaims {
+func GetJWTUserData(c fiber.Ctx) jwt.MapClaims {
 	user := c.Locals("user").(*jwt.Token)
 	claims := user.Claims.(jwt.MapClaims)
 	return claims

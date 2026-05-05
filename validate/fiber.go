@@ -6,14 +6,14 @@ import (
 	"strings"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // ParseAndValidate 解析请求体并验证
 // 用法: data, err := validate.ParseAndValidate[CreateUserRequest](c)
-func ParseAndValidate[T any](c *fiber.Ctx) (*T, error) {
+func ParseAndValidate[T any](c fiber.Ctx) (*T, error) {
 	var req T
-	if err := c.BodyParser(&req); err != nil {
+	if err := c.Bind().Body(&req); err != nil {
 		return nil, fmt.Errorf("请求体解析失败: %w", err)
 	}
 
@@ -25,9 +25,9 @@ func ParseAndValidate[T any](c *fiber.Ctx) (*T, error) {
 }
 
 // ParseQueryAndValidate 解析查询参数并验证
-func ParseQueryAndValidate[T any](c *fiber.Ctx) (*T, error) {
+func ParseQueryAndValidate[T any](c fiber.Ctx) (*T, error) {
 	var req T
-	if err := c.QueryParser(&req); err != nil {
+	if err := c.Bind().Query(&req); err != nil {
 		return nil, fmt.Errorf("查询参数解析失败: %w", err)
 	}
 
@@ -39,9 +39,9 @@ func ParseQueryAndValidate[T any](c *fiber.Ctx) (*T, error) {
 }
 
 // ParseAndValidateWithCustom 使用自定义验证器解析请求体并验证
-func ParseAndValidateWithCustom[T any](c *fiber.Ctx, v *Validator) (*T, error) {
+func ParseAndValidateWithCustom[T any](c fiber.Ctx, v *Validator) (*T, error) {
 	var req T
-	if err := c.BodyParser(&req); err != nil {
+	if err := c.Bind().Body(&req); err != nil {
 		return nil, fmt.Errorf("请求体解析失败: %w", err)
 	}
 
@@ -53,9 +53,9 @@ func ParseAndValidateWithCustom[T any](c *fiber.Ctx, v *Validator) (*T, error) {
 }
 
 // ParseQueryAndValidateWithCustom 使用自定义验证器解析查询参数并验证
-func ParseQueryAndValidateWithCustom[T any](c *fiber.Ctx, v *Validator) (*T, error) {
+func ParseQueryAndValidateWithCustom[T any](c fiber.Ctx, v *Validator) (*T, error) {
 	var req T
-	if err := c.QueryParser(&req); err != nil {
+	if err := c.Bind().Query(&req); err != nil {
 		return nil, fmt.Errorf("查询参数解析失败: %w", err)
 	}
 
