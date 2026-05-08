@@ -173,6 +173,14 @@ func (b *Bootstrap) Run() error {
 		IdleTimeout: time.Duration(Config.App.IdleTimeout) * time.Second,
 		BodyLimit:   Config.App.BodyLimit,
 		ErrorHandler: func(ctx fiber.Ctx, err error) error {
+			// Log the error before handling it
+			log.Error("请求处理错误",
+				zap.Error(err),
+				zap.String("method", ctx.Method()),
+				zap.String("path", ctx.Path()),
+				zap.String("ip", ctx.IP()),
+			)
+
 			// Status code defaults to 500
 			code := fiber.StatusInternalServerError
 

@@ -1,4 +1,4 @@
-package jwt
+﻿package jwt
 
 import (
 	jwtware "github.com/gofiber/contrib/v3/jwt"
@@ -18,7 +18,10 @@ func CreateToken(claims jwt.Claims, secret string) (string, error) {
 }
 
 func GetJWTUserData(c fiber.Ctx) jwt.MapClaims {
-	user := c.Locals("user").(*jwt.Token)
-	claims := user.Claims.(jwt.MapClaims)
+	user := jwtware.FromContext(c)
+	if user == nil {
+		return nil
+	}
+	claims, _ := user.Claims.(jwt.MapClaims)
 	return claims
 }

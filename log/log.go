@@ -221,23 +221,22 @@ func NewLoggerFromConfig(cfg LogConfig) Logger {
 func RequestLoggerMiddleware(logger Logger) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		start := time.Now()
-		err := c.Next()
-		duration := time.Since(start)
+		defer func() {
+			duration := time.Since(start)
+			status := c.Response().StatusCode()
+			method := c.Method()
+			path := c.Path()
+			ip := c.IP()
 
-		status := c.Response().StatusCode()
-		method := c.Method()
-		path := c.Path()
-		ip := c.IP()
-
-		logger.Info("HTTP请求",
-			zap.String("method", method),
-			zap.String("path", path),
-			zap.Int("status", status),
-			zap.Duration("duration", duration),
-			zap.String("ip", ip),
-		)
-
-		return err
+			logger.Info("HTTP请求",
+				zap.String("method", method),
+				zap.String("path", path),
+				zap.Int("status", status),
+				zap.Duration("duration", duration),
+				zap.String("ip", ip),
+			)
+		}()
+		return c.Next()
 	}
 }
 

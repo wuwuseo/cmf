@@ -146,7 +146,7 @@ func InitConfig() {
 		v.SetDefault("app.secret", "secret")
 		v.SetDefault("app.login_expires", 60*60*24)     // 24小时
 		v.SetDefault("app.refresh_expires", 60*60*24*7) // 7天
-		v.SetDefault("app.body_limit", 100*1024*1024)   // 100MB
+		v.SetDefault("app.body_limit", 10*1024*1024)    // 10MB
 		// 缓存默认配置
 		v.SetDefault("cache.default", "memory")
 		v.SetDefault("cache.stores.memory.driver", "memory")
