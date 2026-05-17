@@ -1,7 +1,9 @@
 package filesystem
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"sync"
 	"time"
 
@@ -59,6 +61,26 @@ func (d *DualStorage) Delete(key string) error {
 	return err2
 }
 
+// SetReader 流式存储给定键的文件数据
+// 支持本地存储的流式写入，对于其他类型存储会回退到全量加载
+func (d *DualStorage) SetReader(key string, reader io.Reader, exp time.Duration) error {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+
+	if err := d.Primary.Set(key, data, exp); err != nil {
+		return err
+	}
+
+	if localAdapter, ok := d.Local.(interface {
+		SetReader(string, io.Reader, time.Duration) error
+	}); ok {
+		return localAdapter.SetReader(key, bytes.NewReader(data), exp)
+	}
+	return d.Local.Set(key, data, exp)
+}
+
 type Filesystem struct {
 	Config  config.Config
 	Adapter storage.Storage
@@ -74,6 +96,23 @@ func (f *Filesystem) Set(key string, value []byte, expiration time.Duration) err
 
 func (f *Filesystem) Delete(key string) error {
 	return f.Adapter.Delete(key)
+}
+
+// SetReader 流式存储文件数据
+// 如果底层适配器支持流式写入（SetReader方法），则直接使用流式写入
+// 否则回退到读取所有数据到内存后调用Set方法
+func (f *Filesystem) SetReader(key string, reader io.Reader, expiration time.Duration) error {
+	if adapter, ok := f.Adapter.(interface {
+		SetReader(string, io.Reader, time.Duration) error
+	}); ok {
+		return adapter.SetReader(key, reader, expiration)
+	}
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return err
+	}
+	return f.Adapter.Set(key, data, expiration)
 }
 
 // NewFilesystem 创建一个新的文件系统实例

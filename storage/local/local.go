@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -219,4 +220,46 @@ func (s *Storage) Reset() error {
 func (s *Storage) Close() error {
 	// 本地文件存储不需要特别的关闭操作
 	return nil
+}
+
+// SetReaderWithContext 流式存储给定键的文件数据（带上下文）
+// 直接从 io.Reader 读取数据并写入文件，避免全量数据加载到内存
+func (s *Storage) SetReaderWithContext(ctx context.Context, key string, reader io.Reader, exp time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	if key == "" || reader == nil {
+		return nil
+	}
+
+	filePath := s.getFilePath(key)
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return err
+	}
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if _, err := io.Copy(file, reader); err != nil {
+		return err
+	}
+
+	metaPath := s.getMetaFilePath(key)
+	if exp > 0 {
+		expTime := time.Now().Add(exp).Unix()
+		return os.WriteFile(metaPath, []byte(strconv.FormatInt(expTime, 10)), 0644)
+	}
+	return nil
+}
+
+// SetReader 流式存储给定键的文件数据（不使用上下文）
+// 直接从 io.Reader 读取数据并写入文件，避免全量数据加载到内存
+func (s *Storage) SetReader(key string, reader io.Reader, exp time.Duration) error {
+	return s.SetReaderWithContext(context.Background(), key, reader, exp)
 }
