@@ -289,3 +289,61 @@ func TestTypedCache_StringType(t *testing.T) {
 		t.Fatalf("string 值不正确: 期望 %q, 得到 %q", expected, got)
 	}
 }
+
+func TestCache_Store_Default(t *testing.T) {
+	ctx := context.Background()
+	cfg := newTestConfig()
+
+	c := cache.NewCache(ctx, cfg)
+	store, err := c.Store("memory")
+	if err != nil {
+		t.Fatalf("Store(memory) 失败: %v", err)
+	}
+	if store == nil {
+		t.Fatal("store 应该非 nil")
+	}
+}
+
+func TestCache_Store_Nonexistent(t *testing.T) {
+	ctx := context.Background()
+	cfg := newTestConfig()
+
+	c := cache.NewCache(ctx, cfg)
+	_, err := c.Store("nonexistent")
+	if err == nil {
+		t.Fatal("Store(nonexistent) 应该返回错误")
+	}
+}
+
+func TestCache_Store_Singleton(t *testing.T) {
+	ctx := context.Background()
+	cfg := newTestConfig()
+
+	// 手动添加 another 存储
+	storesCopy := make(map[string]struct {
+		Driver     string `mapstructure:"driver"`
+		DefaultTTL int    `mapstructure:"default_ttl"`
+		Options    any    `mapstructure:"options"`
+	})
+	for k, v := range cfg.Cache.Stores {
+		storesCopy[k] = v
+	}
+	storesCopy["another"] = struct {
+		Driver     string `mapstructure:"driver"`
+		DefaultTTL int    `mapstructure:"default_ttl"`
+		Options    any    `mapstructure:"options"`
+	}{
+		Driver:     "memory",
+		DefaultTTL: 3600,
+		Options:    nil,
+	}
+	cfg.Cache.Stores = storesCopy
+
+	c := cache.NewCache(ctx, cfg)
+
+	store1, _ := c.Store("another")
+	store2, _ := c.Store("another")
+	if store1 != store2 {
+		t.Fatal("同一存储 Store() 两次应该返回同一实例")
+	}
+}

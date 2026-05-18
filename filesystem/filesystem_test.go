@@ -499,4 +499,118 @@ func TestNewFilesystemFromConfig_IsAndLocalLocalDisk(t *testing.T) {
 // 辅助函数验证：mockStorageNoSetReader 实现了 storage.Storage 接口
 // =============================================================================
 
+func TestDualStorage_SetReader(t *testing.T) {
+	primary := newLocalStorage(t)
+	localStorage := newLocalStorage(t)
+	ds := &filesystem.DualStorage{
+		Primary: primary,
+		Local:   localStorage,
+	}
+
+	key := "reader_key"
+	data := []byte("data from reader")
+	reader := bytes.NewReader(data)
+
+	err := ds.SetReader(key, reader, 0)
+	if err != nil {
+		t.Fatalf("DualStorage SetReader 失败: %v", err)
+	}
+
+	got, err := ds.Get(key)
+	if err != nil {
+		t.Fatalf("DualStorage Get 失败: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("期望 %q, 实际 %q", data, got)
+	}
+}
+
+func TestDualStorage_ResetClose(t *testing.T) {
+	primary := newLocalStorage(t)
+	localStorage := newLocalStorage(t)
+	ds := &filesystem.DualStorage{
+		Primary: primary,
+		Local:   localStorage,
+	}
+
+	key := "reset_test_key"
+	_ = ds.Set(key, []byte("val"), 0)
+
+	err := ds.Reset()
+	if err != nil {
+		t.Fatalf("DualStorage Reset 失败: %v", err)
+	}
+
+	err = ds.Close()
+	if err != nil {
+		t.Fatalf("DualStorage Close 失败: %v", err)
+	}
+}
+
+func TestNewFilesystemFromConfig_EmptyDefault(t *testing.T) {
+	cfg := newTestFilesystemConfig(t, t.TempDir())
+	cfg.Filesystem.Default = "" // 空默认值，会使用第一个磁盘
+
+	fs, err := filesystem.NewFilesystemFromConfig(cfg)
+	if err != nil {
+		t.Fatalf("NewFilesystemFromConfig 空默认值失败: %v", err)
+	}
+	if fs == nil {
+		t.Fatal("fs 应该非 nil")
+	}
+
+	key := "empty_default_test"
+	err = fs.Set(key, []byte("val"), 0)
+	if err != nil {
+		t.Fatalf("Set 失败: %v", err)
+	}
+}
+
+func TestNewFilesystem(t *testing.T) {
+	cfg := newTestFilesystemConfig(t, t.TempDir())
+	adapter := newLocalStorage(t)
+
+	fs := filesystem.NewFilesystem(adapter, *cfg)
+	if fs == nil {
+		t.Fatal("NewFilesystem 应该非 nil")
+	}
+
+	key := "new_fs_test"
+	val := []byte("data for new fs")
+	err := fs.Set(key, val, 0)
+	if err != nil {
+		t.Fatalf("NewFilesystem Set 失败: %v", err)
+	}
+
+	got, err := fs.Get(key)
+	if err != nil {
+		t.Fatalf("NewFilesystem Get 失败: %v", err)
+	}
+	if !bytes.Equal(got, val) {
+		t.Fatalf("NewFilesystem 值不正确: 期望 %q, 得到 %q", val, got)
+	}
+}
+
+func TestFilesystem_SetReader_NoSetReaderAdapter(t *testing.T) {
+	cfg := newTestFilesystemConfig(t, t.TempDir())
+	fs, _ := filesystem.NewFilesystemFromConfig(cfg)
+
+	key := "set_reader_test"
+	data := []byte("data from reader in non-set-reader adapter")
+	reader := bytes.NewReader(data)
+
+	err := fs.SetReader(key, reader, 0)
+	if err != nil {
+		t.Fatalf("Filesystem.SetReader 失败: %v", err)
+	}
+
+	got, err := fs.Get(key)
+	if err != nil {
+		t.Fatalf("Filesystem.Get 失败: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("Filesystem 值不正确: 期望 %q, 得到 %q", data, got)
+	}
+}
+
 var _ io.Reader = (*bytes.Reader)(nil)

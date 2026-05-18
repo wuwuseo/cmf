@@ -1,11 +1,15 @@
 package log_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
+	"github.com/gofiber/fiber/v3"
+	"github.com/wuwuseo/cmf/config"
 	"go.uber.org/zap"
 
 	"github.com/wuwuseo/cmf/log"
@@ -449,4 +453,89 @@ func TestRequestLoggerMiddleware(t *testing.T) {
 	if handler == nil {
 		t.Fatal("RequestLoggerMiddleware 返回的 Fiber 中间件不应为 nil")
 	}
+}
+
+// ======================== 7. 集成测试: 实际运行中间件 ========================
+
+// TestRequestLoggerMiddleware_Run 集成测试中间件实际能处理请求
+func TestRequestLoggerMiddleware_Run(t *testing.T) {
+	l := log.NewLoggerFromConfig(log.LogConfig{
+		Level:         "info",
+		Format:        "console",
+		ConsoleOutput: true,
+	})
+	defer l.Sync()
+
+	app := fiber.New()
+	app.Use(log.RequestLoggerMiddleware(l))
+
+	app.Get("/test", func(c fiber.Ctx) error {
+		return c.SendString("OK")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("TestRequestLoggerMiddleware_Run: 请求失败 %v", err)
+	}
+
+	if resp.StatusCode != 200 {
+		t.Errorf("TestRequestLoggerMiddleware_Run: 期望状态码 200, 实际 %d", resp.StatusCode)
+	}
+}
+
+// ======================== 8. InitLogger 和 InitDefaultLogger ========================
+
+// TestInitLogger 测试 InitLogger 不 panic
+func TestInitLogger(t *testing.T) {
+	log.InitLogger(
+		true,       // debug
+		true,       // consoleOutput
+		false,      // fileOutput
+		"test.log", // logFilePath (不会真的写，因为 fileOutput=false)
+		10,         // maxSize
+		5,          // maxBackups
+		7,          // maxAge
+	)
+	// 只要不 panic 就是通过
+}
+
+// TestInitLogger_Production 测试 InitLogger 生产模式不 panic
+func TestInitLogger_Production(t *testing.T) {
+	log.InitLogger(
+		false,  // debug
+		true,   // consoleOutput
+		false,  // fileOutput
+		"",     // logFilePath
+		10,     // maxSize
+		5,      // maxBackups
+		7,      // maxAge
+	)
+	// 只要不 panic 就是通过
+}
+
+// TestInitDefaultLogger 测试 InitDefaultLogger 不 panic
+func TestInitDefaultLogger(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.App.Debug = true
+	cfg.Log.Level = "debug"
+	cfg.Log.Format = "console"
+	cfg.Log.ConsoleOutput = true
+	cfg.Log.FileOutput = false
+
+	log.InitDefaultLogger(cfg)
+	// 只要不 panic 就是通过
+}
+
+// TestInitDefaultLogger_Production 测试 InitDefaultLogger 生产模式
+func TestInitDefaultLogger_Production(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.App.Debug = false
+	cfg.Log.Level = "" // 空值走默认分支
+	cfg.Log.Format = "" // 空值走默认分支
+	cfg.Log.ConsoleOutput = true
+	cfg.Log.FileOutput = false
+
+	log.InitDefaultLogger(cfg)
+	// 只要不 panic 就是通过
 }
