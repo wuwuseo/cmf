@@ -40,16 +40,19 @@ type Database struct {
 
 type Config struct {
 	App struct {
-		Name           string `mapstructure:"name"`
-		Port           int    `mapstructure:"port"`
-		Debug          bool   `mapstructure:"debug"`
-		IdleTimeout    int    `mapstructure:"idle_timeout"`
-		Prefork        bool   `mapstructure:"prefork"`
-		Swagger        bool   `mapstructure:"swagger"`
-		Secret         string `mapstructure:"secret"`
-		LoginExpires   int    `mapstructure:"login_expires"`
-		RefreshExpires int    `mapstructure:"refresh_expires"`
-		BodyLimit      int    `mapstructure:"body_limit"`
+		Name                string `mapstructure:"name"`
+		Port                int    `mapstructure:"port"`
+		Debug               bool   `mapstructure:"debug"`
+		IdleTimeout         int    `mapstructure:"idle_timeout"`
+		Prefork             bool   `mapstructure:"prefork"`
+		Swagger             bool   `mapstructure:"swagger"`
+		Secret              string `mapstructure:"secret"`
+		LoginExpires        int    `mapstructure:"login_expires"`
+		RefreshExpires      int    `mapstructure:"refresh_expires"`
+		BodyLimit           int    `mapstructure:"body_limit"`
+		AdminSecret         string `mapstructure:"admin_secret"`
+		AdminLoginExpires   int    `mapstructure:"admin_login_expires"`
+		AdminRefreshExpires int    `mapstructure:"admin_refresh_expires"`
 	} `mapstructure:"app"`
 
 	Log struct {
