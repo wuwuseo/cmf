@@ -1,0 +1,18 @@
+# 测试覆盖率与日志
+coverage
+coverage_validate
+*.cov
+log_cov
+*.log
+
+# 编辑器 / AI 工具缓存
+.gemini/
+.codegraph/
+.qoder/
+
+# 运行时数据
+data/
+
+# 二进制
+*.exe
+*.exe.bak-*
