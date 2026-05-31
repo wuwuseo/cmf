@@ -209,7 +209,7 @@ func (b *Bootstrap) Run() error {
 
 	app.Use(
 		recover.New(),
-		compress.New(),
+		compress.New(compress.Config{Next: shouldSkipCompression}),
 		requestid.New(),
 	)
 	b.loadMiddlewares(app)
