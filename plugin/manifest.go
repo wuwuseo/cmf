@@ -12,15 +12,15 @@ import (
 var pluginIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 type PluginManifest struct {
-	ID              string               `yaml:"id" json:"id"`
-	Name            string               `yaml:"name" json:"name"`
-	Version         string               `yaml:"version" json:"version"`
-	Author          string               `yaml:"author" json:"author"`
-	Description     string               `yaml:"description" json:"description"`
-	Engine          PluginEngine         `yaml:"engine" json:"engine"`
-	Compatibility   PluginCompatibility  `yaml:"compatibility" json:"compatibility"`
-	Permissions     []string             `yaml:"permissions" json:"permissions"`
-	ExtensionPoints []string             `yaml:"extension_points" json:"extension_points"`
+	ID              string              `yaml:"id" json:"id"`
+	Name            string              `yaml:"name" json:"name"`
+	Version         string              `yaml:"version" json:"version"`
+	Author          string              `yaml:"author" json:"author"`
+	Description     string              `yaml:"description" json:"description"`
+	Engine          PluginEngine        `yaml:"engine" json:"engine"`
+	Compatibility   PluginCompatibility `yaml:"compatibility" json:"compatibility"`
+	Permissions     []string            `yaml:"permissions" json:"permissions"`
+	ExtensionPoints []string            `yaml:"extension_points" json:"extension_points"`
 }
 
 type PluginEngine struct {
