@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -76,5 +77,35 @@ func TestValidateManifestRejectsTraversalEntry(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatal("expected error for path traversal entry")
+	}
+}
+
+func TestParseManifestSupportsUnixTransportSocket(t *testing.T) {
+	data := strings.Replace(validManifestYAML, "  entry:\n", "  transport:\n    linux-amd64: unix\n  socket:\n    linux-amd64: runtime/plugin.sock\n  entry:\n", 1)
+	manifest, err := ParseManifest([]byte(data))
+	if err != nil {
+		t.Fatalf("ParseManifest returned error: %v", err)
+	}
+	if manifest.Engine.Transport["linux-amd64"] != TransportUnix {
+		t.Fatalf("transport = %q, want unix", manifest.Engine.Transport["linux-amd64"])
+	}
+	if manifest.Engine.Socket["linux-amd64"] != "runtime/plugin.sock" {
+		t.Fatalf("socket = %q, want runtime/plugin.sock", manifest.Engine.Socket["linux-amd64"])
+	}
+}
+
+func TestValidateManifestRejectsTraversalSocket(t *testing.T) {
+	data := strings.Replace(validManifestYAML, "  entry:\n", "  transport:\n    linux-amd64: unix\n  socket:\n    linux-amd64: ../plugin.sock\n  entry:\n", 1)
+	_, err := ParseManifest([]byte(data))
+	if !errors.Is(err, ErrInvalidPluginPath) {
+		t.Fatalf("ParseManifest err = %v, want ErrInvalidPluginPath", err)
+	}
+}
+
+func TestValidateManifestRejectsUnsupportedTransport(t *testing.T) {
+	data := strings.Replace(validManifestYAML, "  entry:\n", "  transport:\n    linux-amd64: named-pipe\n  entry:\n", 1)
+	_, err := ParseManifest([]byte(data))
+	if !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("ParseManifest err = %v, want ErrInvalidManifest", err)
 	}
 }

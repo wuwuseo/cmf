@@ -7,6 +7,10 @@ const (
 	ProtocolGRPC  = "grpc"
 	ProtocolStdio = "stdio"
 
+	TransportTCP   = "tcp"
+	TransportUnix  = "unix"
+	TransportStdio = "stdio"
+
 	ExtensionAdminRoutes      = "admin.routes"
 	ExtensionAdminMenus       = "admin.menus"
 	ExtensionAdminPermissions = "admin.permissions"

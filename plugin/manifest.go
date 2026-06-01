@@ -24,9 +24,12 @@ type PluginManifest struct {
 }
 
 type PluginEngine struct {
-	Type     string            `yaml:"type" json:"type"`
-	Protocol string            `yaml:"protocol" json:"protocol"`
-	Entry    map[string]string `yaml:"entry" json:"entry"`
+	Type      string            `yaml:"type" json:"type"`
+	Protocol  string            `yaml:"protocol" json:"protocol"`
+	Transport map[string]string `yaml:"transport" json:"transport"`
+	Address   map[string]string `yaml:"address" json:"address"`
+	Socket    map[string]string `yaml:"socket" json:"socket"`
+	Entry     map[string]string `yaml:"entry" json:"entry"`
 }
 
 type PluginCompatibility struct {
@@ -78,12 +81,37 @@ func (m *PluginManifest) Validate() error {
 			return fmt.Errorf("%w: entry %s escapes plugin root", ErrInvalidPluginPath, entry)
 		}
 	}
+	for platform, transport := range m.Engine.Transport {
+		if strings.TrimSpace(platform) == "" || strings.TrimSpace(transport) == "" {
+			return fmt.Errorf("%w: empty engine transport", ErrInvalidManifest)
+		}
+		if !isAllowedTransport(transport) {
+			return fmt.Errorf("%w: unsupported transport %s", ErrInvalidManifest, transport)
+		}
+	}
+	for platform, socket := range m.Engine.Socket {
+		if strings.TrimSpace(platform) == "" || strings.TrimSpace(socket) == "" {
+			return fmt.Errorf("%w: empty engine socket", ErrInvalidManifest)
+		}
+		if filepath.IsAbs(socket) || pathEscapesRoot(socket) {
+			return fmt.Errorf("%w: socket %s escapes plugin root", ErrInvalidPluginPath, socket)
+		}
+	}
 	return nil
 }
 
 func isAllowedProtocol(protocol string) bool {
 	switch protocol {
 	case ProtocolHTTP, ProtocolGRPC, ProtocolStdio:
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedTransport(transport string) bool {
+	switch transport {
+	case TransportTCP, TransportUnix, TransportStdio:
 		return true
 	default:
 		return false
