@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	fileadapter "github.com/casbin/casbin/v2/persist/file-adapter"
+	fileadapter "github.com/casbin/casbin/v3/persist/file-adapter"
 	"github.com/wuwuseo/cmf/casbin"
 	"github.com/wuwuseo/cmf/config"
 )
@@ -74,18 +74,8 @@ func TestNewCasbin(t *testing.T) {
 }
 
 // TestNewCasbinFromString 测试使用模型字符串创建 casbin 实例
-// 注意：casbin v2.135.0 中 NewEnforcer 当第一个参数非 string 时，
-// 期望参数顺序为 (model.Model, persist.Adapter)，但源码中传入的是 (adapter, model)
-// 此处捕获 panic 并标记为已知问题
 func TestNewCasbinFromString(t *testing.T) {
 	_, adapter := setupTestFiles(t)
-
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("已知问题 - NewCasbinFromString 中 casbin.NewEnforcer 参数顺序错误: %v", r)
-			t.Skip("跳过：源码 casbin.NewEnforcer 调用参数顺序与 casbin v2.135.0 API 不匹配，应改为 NewEnforcer(m, adapter)")
-		}
-	}()
 
 	c := casbin.NewCasbinFromString(adapter, testModel)
 	if c == nil {

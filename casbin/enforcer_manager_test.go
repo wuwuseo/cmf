@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	fileadapter "github.com/casbin/casbin/v2/persist/file-adapter"
+	fileadapter "github.com/casbin/casbin/v3/persist/file-adapter"
 	"github.com/wuwuseo/cmf/casbin"
 )
 
@@ -215,7 +215,9 @@ func TestGetEnforcer_CachedReturn(t *testing.T) {
 	manager, modelPath, _ := setupEnforcerManager(t)
 
 	config := &casbin.DomainConfig{ModelPath: modelPath}
-	manager.SetDomainConfig("testdomain", config)
+	if err := manager.SetDomainConfig("testdomain", config); err != nil {
+		t.Fatalf("设置域配置失败: %v", err)
+	}
 
 	// 第一次获取，创建 enforcer
 	e1, err := manager.GetEnforcer("testdomain")

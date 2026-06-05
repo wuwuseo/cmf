@@ -1,23 +1,15 @@
 package casbin
 
 import (
-	"github.com/casbin/casbin/v2"
-	"github.com/casbin/casbin/v2/model"
-	"github.com/casbin/casbin/v2/persist"
-	gofibercasbin "github.com/gofiber/contrib/v3/casbin"
+	"github.com/casbin/casbin/v3"
+	"github.com/casbin/casbin/v3/model"
+	"github.com/casbin/casbin/v3/persist"
 	"github.com/gofiber/fiber/v3/log"
 	"github.com/wuwuseo/cmf/config"
 )
 
 type Casbin struct {
 	Enforcer *casbin.Enforcer
-}
-
-func NewCasbinMiddleware(adapter persist.Adapter, path string) *gofibercasbin.Middleware {
-	return gofibercasbin.New(gofibercasbin.Config{
-		ModelFilePath: path,
-		PolicyAdapter: adapter,
-	})
 }
 
 func NewCasbin(adapter persist.Adapter, path string) *Casbin {
@@ -35,7 +27,7 @@ func NewCasbinFromString(adapter persist.Adapter, modelString string) *Casbin {
 	if err != nil {
 		log.Fatalf("error: model: %s", err)
 	}
-	e, err := casbin.NewEnforcer(adapter, m)
+	e, err := casbin.NewEnforcer(m, adapter)
 	if err != nil {
 		panic(err)
 	}
@@ -62,7 +54,10 @@ func InitEnforcerManager(adapter persist.Adapter, cfg *config.Config) *EnforcerM
 		}
 		// 只有在配置有效时才设置
 		if domainConfig.ModelPath != "" || domainConfig.ModelText != "" {
-			manager.SetDomainConfig(domain.Name, domainConfig)
+			if err := manager.SetDomainConfig(domain.Name, domainConfig); err != nil {
+				log.Warnf("Failed to set casbin domain config for %s: %v", domain.Name, err)
+				continue
+			}
 
 			// 如果设置了自动加载，则立即创建Enforcer
 			if domain.AutoLoad {

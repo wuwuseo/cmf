@@ -4,12 +4,11 @@ go 1.25.1
 
 require (
 	github.com/allegro/bigcache/v3 v3.1.0
-	github.com/casbin/casbin/v2 v2.135.0
+	github.com/casbin/casbin/v3 v3.10.0
 	github.com/eko/gocache/lib/v4 v4.2.2
 	github.com/eko/gocache/store/bigcache/v4 v4.2.3
 	github.com/eko/gocache/store/redis/v4 v4.2.5
 	github.com/go-playground/validator/v10 v10.28.0
-	github.com/gofiber/contrib/v3/casbin v1.0.4
 	github.com/gofiber/contrib/v3/jwt v1.1.3
 	github.com/gofiber/contrib/v3/swaggerui v1.0.4
 	github.com/gofiber/contrib/v3/zap v1.0.4
@@ -17,12 +16,15 @@ require (
 	github.com/gofiber/storage v1.3.3
 	github.com/gofiber/storage/s3/v2 v2.4.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/google/uuid v1.6.0
 	github.com/google/wire v0.7.0
 	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.16.0
 	github.com/spf13/viper v1.21.0
+	github.com/testcontainers/testcontainers-go/modules/mysql v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/redis v0.42.0
 	go.uber.org/zap v1.28.0
+	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/crypto v0.50.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
@@ -97,7 +99,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gofiber/schema v1.7.1 // indirect
 	github.com/gofiber/utils/v2 v2.0.4 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
@@ -135,8 +136,6 @@ require (
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/testcontainers/testcontainers-go v0.42.0 // indirect
-	github.com/testcontainers/testcontainers-go/modules/mysql v0.42.0 // indirect
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect
 	github.com/tklauser/numcpus v0.11.0 // indirect
@@ -149,7 +148,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b // indirect
 	golang.org/x/net v0.53.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
