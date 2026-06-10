@@ -7,7 +7,40 @@ import (
 
 	fileadapter "github.com/casbin/casbin/v3/persist/file-adapter"
 	"github.com/wuwuseo/cmf/casbin"
+	cmflog "github.com/wuwuseo/cmf/log"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+type capturedLogEntry struct {
+	message string
+	fields  map[string]interface{}
+}
+
+type captureLogger struct {
+	entries []capturedLogEntry
+}
+
+func (l *captureLogger) Debug(msg string, fields ...zap.Field)  { l.record(msg, fields...) }
+func (l *captureLogger) Info(msg string, fields ...zap.Field)   { l.record(msg, fields...) }
+func (l *captureLogger) Warn(msg string, fields ...zap.Field)   { l.record(msg, fields...) }
+func (l *captureLogger) Error(msg string, fields ...zap.Field)  { l.record(msg, fields...) }
+func (l *captureLogger) Fatal(msg string, fields ...zap.Field)  { l.record(msg, fields...) }
+func (l *captureLogger) With(fields ...zap.Field) cmflog.Logger { return l }
+func (l *captureLogger) Sync() error                            { return nil }
+
+func (l *captureLogger) record(msg string, fields ...zap.Field) {
+	entry := capturedLogEntry{message: msg, fields: make(map[string]interface{}, len(fields))}
+	for _, field := range fields {
+		switch field.Type {
+		case zapcore.StringType:
+			entry.fields[field.Key] = field.String
+		case zapcore.ErrorType:
+			entry.fields[field.Key] = field.Interface
+		}
+	}
+	l.entries = append(l.entries, entry)
+}
 
 // setupEnforcerManager 创建测试用的 EnforcerManager 和临时文件
 func setupEnforcerManager(t *testing.T) (*casbin.EnforcerManager, string, *fileadapter.Adapter) {
@@ -29,6 +62,38 @@ func setupEnforcerManager(t *testing.T) (*casbin.EnforcerManager, string, *filea
 	manager := casbin.NewEnforcerManager(adapter, "default")
 
 	return manager, modelPath, adapter
+}
+
+func TestEnforcerManager_UsesDefaultLogger(t *testing.T) {
+	logger := &captureLogger{}
+	previous := cmflog.GetDefault()
+	cmflog.SetDefault(logger)
+	t.Cleanup(func() { cmflog.SetDefault(previous) })
+
+	manager, modelPath, _ := setupEnforcerManager(t)
+	config := &casbin.DomainConfig{ModelPath: modelPath}
+	if err := manager.SetDomainConfig("default", config); err != nil {
+		t.Fatalf("设置域配置失败: %v", err)
+	}
+	if _, err := manager.GetDefaultEnforcer(); err != nil {
+		t.Fatalf("获取默认 enforcer 失败: %v", err)
+	}
+
+	if len(logger.entries) == 0 {
+		t.Fatal("期望 Casbin 管理器日志写入 CMF 默认 logger")
+	}
+	assertLogEntry(t, logger.entries, "domain config set for domain", "domain", "default")
+	assertLogEntry(t, logger.entries, "enforcer created successfully for domain", "domain", "default")
+}
+
+func assertLogEntry(t *testing.T, entries []capturedLogEntry, message string, field string, value string) {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.message == message && entry.fields[field] == value {
+			return
+		}
+	}
+	t.Fatalf("未找到日志 message=%s field=%s value=%s", message, field, value)
 }
 
 // TestNewEnforcerManager 测试创建管理器

@@ -7,7 +7,8 @@ import (
 	"github.com/casbin/casbin/v3"
 	"github.com/casbin/casbin/v3/model"
 	"github.com/casbin/casbin/v3/persist"
-	fiberlog "github.com/gofiber/fiber/v3/log"
+	"github.com/wuwuseo/cmf/log"
+	"go.uber.org/zap"
 )
 
 // DomainConfig 域配置
@@ -63,33 +64,33 @@ func (em *EnforcerManager) createEnforcerWithConfig(domain string, config *Domai
 	// 优先使用 ModelText，其次使用 ModelPath
 	if config.ModelText != "" {
 		// 使用模型文本创建
-		fiberlog.Infof("creating enforcer for domain %s with model text", domain)
+		log.Info("creating enforcer with model text", zap.String("domain", domain))
 		m, parseErr := model.NewModelFromString(config.ModelText)
 		if parseErr != nil {
-			fiberlog.Errorf("failed to parse model text for domain %s: %v", domain, parseErr)
+			log.Error("failed to parse model text", zap.String("domain", domain), zap.Error(parseErr))
 			return nil, fmt.Errorf("failed to parse model text: %w", parseErr)
 		}
 		enforcer, err = casbin.NewEnforcer(m, em.adapter)
 	} else {
 		// 使用模型文件创建
-		fiberlog.Infof("creating enforcer for domain %s with model path: %s", domain, config.ModelPath)
+		log.Info("creating enforcer with model path", zap.String("domain", domain), zap.String("model_path", config.ModelPath))
 		enforcer, err = casbin.NewEnforcer(config.ModelPath, em.adapter)
 	}
 
 	if err != nil {
-		fiberlog.Errorf("failed to create enforcer for domain %s: %v", domain, err)
+		log.Error("failed to create enforcer", zap.String("domain", domain), zap.Error(err))
 		return nil, fmt.Errorf("failed to create enforcer: %w", err)
 	}
 
 	// 加载策略
 	if err := enforcer.LoadPolicy(); err != nil {
-		fiberlog.Errorf("failed to load policy for domain %s: %v", domain, err)
+		log.Error("failed to load policy", zap.String("domain", domain), zap.Error(err))
 		return nil, fmt.Errorf("failed to load policy: %w", err)
 	}
 
 	// 保存到 map 中
 	em.enforcers[domain] = enforcer
-	fiberlog.Infof("enforcer created successfully for domain: %s", domain)
+	log.Info("enforcer created successfully for domain", zap.String("domain", domain))
 
 	return enforcer, nil
 }
@@ -99,7 +100,7 @@ func (em *EnforcerManager) createEnforcerWithConfig(domain string, config *Domai
 func (em *EnforcerManager) GetEnforcer(domain string) (*casbin.Enforcer, error) {
 	// 验证域名
 	if err := em.validateDomain(domain); err != nil {
-		fiberlog.Errorf("invalid domain name: %s", domain)
+		log.Error("invalid domain name", zap.String("domain", domain), zap.Error(err))
 		return nil, err
 	}
 
@@ -109,7 +110,7 @@ func (em *EnforcerManager) GetEnforcer(domain string) (*casbin.Enforcer, error) 
 	em.mu.RUnlock()
 
 	if exists {
-		fiberlog.Debugf("enforcer found for domain: %s", domain)
+		log.Debug("enforcer found", zap.String("domain", domain))
 		return enforcer, nil
 	}
 
@@ -119,7 +120,7 @@ func (em *EnforcerManager) GetEnforcer(domain string) (*casbin.Enforcer, error) 
 
 	// 双重检查：再次确认是否已被其他 goroutine 创建
 	if enforcer, exists = em.enforcers[domain]; exists {
-		fiberlog.Debugf("enforcer already created by another goroutine for domain: %s", domain)
+		log.Debug("enforcer already created by another goroutine", zap.String("domain", domain))
 		return enforcer, nil
 	}
 
@@ -127,15 +128,15 @@ func (em *EnforcerManager) GetEnforcer(domain string) (*casbin.Enforcer, error) 
 	config, hasConfig := em.domainConfigs[domain]
 	if !hasConfig {
 		// 如果没有配置，返回错误
-		fiberlog.Errorf("no config found for domain: %s", domain)
+		log.Error("no config found for domain", zap.String("domain", domain))
 		return nil, fmt.Errorf("no config found for domain: %s", domain)
 	}
 
 	// 创建新的 Enforcer
-	fiberlog.Infof("creating new enforcer for domain: %s", domain)
+	log.Info("creating new enforcer", zap.String("domain", domain))
 	enforcer, err := em.createEnforcerWithConfig(domain, config)
 	if err != nil {
-		fiberlog.Errorf("failed to create enforcer for domain %s: %v", domain, err)
+		log.Error("failed to create enforcer", zap.String("domain", domain), zap.Error(err))
 		return nil, err
 	}
 
@@ -152,7 +153,7 @@ func (em *EnforcerManager) GetDefaultEnforcer() (*casbin.Enforcer, error) {
 func (em *EnforcerManager) GetEnforcerWithConfig(domain string, config *DomainConfig) (*casbin.Enforcer, error) {
 	// 验证域名
 	if err := em.validateDomain(domain); err != nil {
-		fiberlog.Errorf("invalid domain name: %s", domain)
+		log.Error("invalid domain name", zap.String("domain", domain), zap.Error(err))
 		return nil, err
 	}
 
@@ -166,7 +167,7 @@ func (em *EnforcerManager) GetEnforcerWithConfig(domain string, config *DomainCo
 
 	// 检查 Enforcer 是否已存在
 	if _, exists := em.enforcers[domain]; exists {
-		fiberlog.Errorf("enforcer already exists for domain: %s", domain)
+		log.Error("enforcer already exists", zap.String("domain", domain))
 		return nil, ErrEnforcerAlreadyExists
 	}
 
@@ -174,12 +175,12 @@ func (em *EnforcerManager) GetEnforcerWithConfig(domain string, config *DomainCo
 	em.domainConfigs[domain] = config
 
 	// 创建新的 Enforcer
-	fiberlog.Infof("creating new enforcer with custom config for domain: %s", domain)
+	log.Info("creating new enforcer with custom config", zap.String("domain", domain))
 	enforcer, err := em.createEnforcerWithConfig(domain, config)
 	if err != nil {
 		// 创建失败，清理配置
 		delete(em.domainConfigs, domain)
-		fiberlog.Errorf("failed to create enforcer for domain %s: %v", domain, err)
+		log.Error("failed to create enforcer", zap.String("domain", domain), zap.Error(err))
 		return nil, err
 	}
 
@@ -190,7 +191,7 @@ func (em *EnforcerManager) GetEnforcerWithConfig(domain string, config *DomainCo
 func (em *EnforcerManager) SetDomainConfig(domain string, config *DomainConfig) error {
 	// 验证域名
 	if err := em.validateDomain(domain); err != nil {
-		fiberlog.Errorf("invalid domain name: %s", domain)
+		log.Error("invalid domain name", zap.String("domain", domain), zap.Error(err))
 		return err
 	}
 
@@ -204,13 +205,13 @@ func (em *EnforcerManager) SetDomainConfig(domain string, config *DomainConfig) 
 
 	// 检查 Enforcer 是否已创建
 	if _, exists := em.enforcers[domain]; exists {
-		fiberlog.Errorf("cannot set config for domain %s: enforcer already exists", domain)
+		log.Error("cannot set config because enforcer already exists", zap.String("domain", domain))
 		return ErrConfigAlreadySet
 	}
 
 	// 保存配置
 	em.domainConfigs[domain] = config
-	fiberlog.Infof("domain config set for domain: %s", domain)
+	log.Info("domain config set for domain", zap.String("domain", domain))
 
 	return nil
 }

@@ -4,8 +4,9 @@ import (
 	"github.com/casbin/casbin/v3"
 	"github.com/casbin/casbin/v3/model"
 	"github.com/casbin/casbin/v3/persist"
-	"github.com/gofiber/fiber/v3/log"
 	"github.com/wuwuseo/cmf/config"
+	"github.com/wuwuseo/cmf/log"
+	"go.uber.org/zap"
 )
 
 type Casbin struct {
@@ -25,7 +26,7 @@ func NewCasbin(adapter persist.Adapter, path string) *Casbin {
 func NewCasbinFromString(adapter persist.Adapter, modelString string) *Casbin {
 	m, err := model.NewModelFromString(modelString)
 	if err != nil {
-		log.Fatalf("error: model: %s", err)
+		log.Fatal("failed to parse casbin model", zap.Error(err))
 	}
 	e, err := casbin.NewEnforcer(m, adapter)
 	if err != nil {
@@ -55,7 +56,7 @@ func InitEnforcerManager(adapter persist.Adapter, cfg *config.Config) *EnforcerM
 		// 只有在配置有效时才设置
 		if domainConfig.ModelPath != "" || domainConfig.ModelText != "" {
 			if err := manager.SetDomainConfig(domain.Name, domainConfig); err != nil {
-				log.Warnf("Failed to set casbin domain config for %s: %v", domain.Name, err)
+				log.Warn("failed to set casbin domain config", zap.String("domain", domain.Name), zap.Error(err))
 				continue
 			}
 
@@ -63,7 +64,7 @@ func InitEnforcerManager(adapter persist.Adapter, cfg *config.Config) *EnforcerM
 			if domain.AutoLoad {
 				if _, err := manager.GetEnforcer(domain.Name); err != nil {
 					// 记录错误但不中断程序
-					log.Warnf("Failed to create enforcer for domain %s: %v", domain.Name, err)
+					log.Warn("failed to create enforcer", zap.String("domain", domain.Name), zap.Error(err))
 				}
 			}
 		}
