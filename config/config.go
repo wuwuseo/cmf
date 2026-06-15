@@ -55,6 +55,13 @@ type Config struct {
 		AdminRefreshExpires int    `mapstructure:"admin_refresh_expires"`
 	} `mapstructure:"app"`
 
+	Attachment struct {
+		PublicBaseURL string `mapstructure:"public_base_url"`
+		XAccelEnabled bool   `mapstructure:"x_accel_enabled"`
+		XAccelPrefix  string `mapstructure:"x_accel_prefix"`
+		AccessURLTTL  int    `mapstructure:"access_url_ttl"`
+	} `mapstructure:"attachment"`
+
 	Log struct {
 		Level         string `mapstructure:"level"`
 		Format        string `mapstructure:"format"`
@@ -150,6 +157,10 @@ func InitConfig() {
 		v.SetDefault("app.login_expires", 60*60*24)     // 24小时
 		v.SetDefault("app.refresh_expires", 60*60*24*7) // 7天
 		v.SetDefault("app.body_limit", 10*1024*1024)    // 10MB
+		v.SetDefault("attachment.public_base_url", "/uploads")
+		v.SetDefault("attachment.x_accel_enabled", true)
+		v.SetDefault("attachment.x_accel_prefix", "/_protected_attachments")
+		v.SetDefault("attachment.access_url_ttl", 600)
 		// 缓存默认配置
 		v.SetDefault("cache.default", "memory")
 		v.SetDefault("cache.stores.memory.driver", "memory")
