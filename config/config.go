@@ -93,6 +93,12 @@ type Config struct {
 		Connections map[string]Redis `mapstructure:"connections"`
 	} `mapstructure:"redis"`
 
+	Captcha struct {
+		Store           string `mapstructure:"store"`
+		RedisConnection string `mapstructure:"redis_connection"`
+		KeyPrefix       string `mapstructure:"key_prefix"`
+	} `mapstructure:"captcha"`
+
 	Filesystem struct {
 		Default    string `mapstructure:"default"`
 		IsAndLocal bool   `mapstructure:"is_and_local"` // 是否同时存储在本地文件系统
@@ -183,6 +189,11 @@ func InitConfig() {
 		v.SetDefault("redis.connections.redis.conn_max_idle_time", 30)
 		v.SetDefault("redis.connections.redis.conn_max_lifetime", 24)
 		v.SetDefault("redis.connections.redis.use_tls", false)
+
+		v.SetDefault("captcha.store", "memory")
+		v.SetDefault("captcha.redis_connection", "redis")
+		v.SetDefault("captcha.key_prefix", "captcha")
+
 		// 日志默认配置
 		v.SetDefault("log.level", "info")
 		v.SetDefault("log.format", "json")
