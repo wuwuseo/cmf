@@ -16,3 +16,4 @@ data/
 # 二进制
 *.exe
 *.exe.bak-*
+/*.sum
