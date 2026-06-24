@@ -3,12 +3,19 @@ package provider
 import (
 	_ "embed"
 	"regexp"
+
+	"golang.org/x/image/font/gofont/goregular"
 )
 
 const defaultChineseFontFamily = "CMFCaptchaChinese"
 
 //go:embed assets/noto_sans_sc_subset.ttf
 var defaultChineseFontTTF []byte
+
+var defaultTextFont = ChineseFont{
+	Family: "CMFCaptchaText",
+	TTF:    goregular.TTF,
+}
 
 var validFontFamily = regexp.MustCompile(`^[A-Za-z0-9 _-]{1,64}$`)
 

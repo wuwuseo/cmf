@@ -57,12 +57,17 @@ func (s *Service) CreateChallenge(ctx context.Context, scene string, meta Client
 	if err := s.store.SaveChallenge(ctx, id, record, ttl); err != nil {
 		return ChallengeResult{}, fmt.Errorf("save captcha challenge: %w", err)
 	}
+	var challengeType ChallengeType
+	if described, ok := provider.(DescribedProvider); ok {
+		challengeType = described.Descriptor().ChallengeType
+	}
 	return ChallengeResult{
-		Required:    true,
-		ChallengeID: id,
-		Provider:    policy.Provider,
-		ExpiresIn:   int64(ttl / time.Second),
-		Payload:     challenge.Payload,
+		Required:      true,
+		ChallengeID:   id,
+		Provider:      policy.Provider,
+		ChallengeType: challengeType,
+		ExpiresIn:     int64(ttl / time.Second),
+		Payload:       challenge.Payload,
 	}, nil
 }
 

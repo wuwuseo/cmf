@@ -28,12 +28,57 @@ type Challenge struct {
 	PrivateState json.RawMessage
 }
 
+type ChallengeType string
+
+const (
+	ChallengeTypeImageText  ChallengeType = "image_text"
+	ChallengeTypeImageClick ChallengeType = "image_click"
+	ChallengeTypeGeeTestGT4 ChallengeType = "geetest_gt4"
+)
+
+type LocalizedText map[string]string
+
+type ProviderSecretDescriptor struct {
+	Label     LocalizedText `json:"label"`
+	Help      LocalizedText `json:"help,omitempty"`
+	Required  bool          `json:"required"`
+	MinLength int           `json:"min_length,omitempty"`
+}
+
+type ProviderFieldOption struct {
+	Value string        `json:"value"`
+	Label LocalizedText `json:"label"`
+}
+
+type ProviderFieldDescriptor struct {
+	Key          string                `json:"key"`
+	Type         string                `json:"type"`
+	Label        LocalizedText         `json:"label"`
+	Help         LocalizedText         `json:"help,omitempty"`
+	DefaultValue any                   `json:"default_value,omitempty"`
+	Required     bool                  `json:"required,omitempty"`
+	Min          *float64              `json:"min,omitempty"`
+	Max          *float64              `json:"max,omitempty"`
+	Step         *float64              `json:"step,omitempty"`
+	MinLength    int                   `json:"min_length,omitempty"`
+	MaxLength    int                   `json:"max_length,omitempty"`
+	Options      []ProviderFieldOption `json:"options,omitempty"`
+}
+
+type ProviderDescriptor struct {
+	DisplayName   LocalizedText             `json:"display_name"`
+	ChallengeType ChallengeType             `json:"challenge_type"`
+	Secret        ProviderSecretDescriptor  `json:"secret"`
+	Fields        []ProviderFieldDescriptor `json:"fields"`
+}
+
 type ChallengeResult struct {
-	Required    bool            `json:"required"`
-	ChallengeID string          `json:"challenge_id,omitempty"`
-	Provider    string          `json:"provider,omitempty"`
-	ExpiresIn   int64           `json:"expires_in,omitempty"`
-	Payload     json.RawMessage `json:"payload,omitempty"`
+	Required      bool            `json:"required"`
+	ChallengeID   string          `json:"challenge_id,omitempty"`
+	Provider      string          `json:"provider,omitempty"`
+	ChallengeType ChallengeType   `json:"challenge_type,omitempty"`
+	ExpiresIn     int64           `json:"expires_in,omitempty"`
+	Payload       json.RawMessage `json:"payload,omitempty"`
 }
 
 type ProofResult struct {
@@ -56,6 +101,11 @@ type Provider interface {
 	Create(ctx context.Context, config json.RawMessage, meta ClientMeta) (Challenge, error)
 	Verify(ctx context.Context, config, privateState, response json.RawMessage, meta ClientMeta) error
 	ValidateConfig(config json.RawMessage) error
+}
+
+type DescribedProvider interface {
+	Provider
+	Descriptor() ProviderDescriptor
 }
 
 type PolicySource interface {

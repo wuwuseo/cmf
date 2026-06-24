@@ -48,6 +48,31 @@ func NewGeeTestGT4(client *http.Client) *GeeTestGT4 {
 
 func (*GeeTestGT4) Name() string { return geeTestName }
 
+func (*GeeTestGT4) Descriptor() captcha.ProviderDescriptor {
+	return captcha.ProviderDescriptor{
+		DisplayName:   localized("极验 GT4", "GeeTest GT4"),
+		ChallengeType: captcha.ChallengeTypeGeeTestGT4,
+		Secret: captcha.ProviderSecretDescriptor{
+			Label:    localized("Captcha Key", "Captcha Key"),
+			Help:     localized("极验后台提供的服务端密钥。", "Server-side key from the GeeTest console."),
+			Required: true,
+		},
+		Fields: []captcha.ProviderFieldDescriptor{
+			{
+				Key: "captcha_id", Type: fieldTypeText,
+				Label:    localized("Captcha ID", "Captcha ID"),
+				Required: true, MinLength: 1,
+			},
+			{
+				Key: "timeout_ms", Type: fieldTypeNumber,
+				Label:        localized("请求超时（毫秒）", "Request timeout (ms)"),
+				DefaultValue: 3000, Required: true,
+				Min: numberPointer(100), Max: numberPointer(10000), Step: numberPointer(100),
+			},
+		},
+	}
+}
+
 func decodeGeeTestConfig(raw json.RawMessage) (geeTestConfig, error) {
 	config := geeTestConfig{TimeoutMS: 3000}
 	if err := json.Unmarshal(raw, &config); err != nil {

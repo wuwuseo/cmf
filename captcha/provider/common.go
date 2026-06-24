@@ -99,7 +99,7 @@ func answerDigest(answer, secret, salt string) string {
 }
 
 func renderTextPNG(text string, width, height int) (json.RawMessage, error) {
-	return renderTextPNGWithFont(text, width, height, ChineseFont{})
+	return renderTextPNGWithFont(text, width, height, defaultTextFont)
 }
 
 func renderTextPNGWithFont(

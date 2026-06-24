@@ -50,6 +50,51 @@ func NewChineseClick(options ...ChineseOption) *ChineseClick {
 }
 func (*ChineseClick) Name() string { return chineseClickName }
 
+func (*ChineseClick) Descriptor() captcha.ProviderDescriptor {
+	return captcha.ProviderDescriptor{
+		DisplayName:   localized("中文点选图片", "Chinese click image"),
+		ChallengeType: captcha.ChallengeTypeImageClick,
+		Secret:        imageSecretDescriptor(),
+		Fields: []captcha.ProviderFieldDescriptor{
+			{
+				Key: "characters", Type: fieldTypeTextarea,
+				Label:        localized("中文字符集合", "Chinese character set"),
+				DefaultValue: string(defaultChinese), Required: true,
+			},
+			{
+				Key: "display_count", Type: fieldTypeNumber,
+				Label:        localized("展示字符数", "Displayed characters"),
+				DefaultValue: 6, Required: true,
+				Min: numberPointer(4), Max: numberPointer(12), Step: numberPointer(1),
+			},
+			{
+				Key: "point_count", Type: fieldTypeNumber,
+				Label:        localized("点选字符数", "Required clicks"),
+				DefaultValue: 3, Required: true,
+				Min: numberPointer(1), Max: numberPointer(12), Step: numberPointer(1),
+			},
+			{
+				Key: "tolerance", Type: fieldTypeNumber,
+				Label:        localized("点击容差", "Click tolerance"),
+				DefaultValue: 0.08, Required: true,
+				Min: numberPointer(0.001), Max: numberPointer(0.2), Step: numberPointer(0.01),
+			},
+			{
+				Key: "width", Type: fieldTypeNumber,
+				Label:        localized("图片宽度", "Image width"),
+				DefaultValue: 300, Required: true,
+				Min: numberPointer(180), Step: numberPointer(1),
+			},
+			{
+				Key: "height", Type: fieldTypeNumber,
+				Label:        localized("图片高度", "Image height"),
+				DefaultValue: 180, Required: true,
+				Min: numberPointer(100), Step: numberPointer(1),
+			},
+		},
+	}
+}
+
 func decodeClickConfig(raw json.RawMessage) (clickConfig, []rune, error) {
 	config := clickConfig{
 		Characters:   string(defaultChinese),

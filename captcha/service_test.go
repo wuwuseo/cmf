@@ -52,6 +52,10 @@ func (p *testProvider) Verify(_ context.Context, _, _, _ json.RawMessage, _ Clie
 
 func (p *testProvider) ValidateConfig(json.RawMessage) error { return nil }
 
+func (p *testProvider) Descriptor() ProviderDescriptor {
+	return ProviderDescriptor{ChallengeType: ChallengeTypeImageText}
+}
+
 func newTestService(t *testing.T, provider *testProvider, policies staticPolicySource) *Service {
 	t.Helper()
 	registry := NewRegistry()
@@ -101,6 +105,9 @@ func TestServiceChallengeVerifyAndConsumeProof(t *testing.T) {
 	}
 	if !challenge.Required || challenge.ChallengeID == "" || challenge.Provider != "test" {
 		t.Fatalf("CreateChallenge() = %+v", challenge)
+	}
+	if challenge.ChallengeType != ChallengeTypeImageText {
+		t.Fatalf("ChallengeType = %q, want %q", challenge.ChallengeType, ChallengeTypeImageText)
 	}
 
 	proof, err := service.VerifyChallenge(

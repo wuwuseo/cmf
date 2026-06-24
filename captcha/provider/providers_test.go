@@ -147,6 +147,47 @@ func TestBuiltInProvidersRejectMissingSecret(t *testing.T) {
 	}
 }
 
+func TestBuiltInProvidersExposeConfigurationDescriptors(t *testing.T) {
+	tests := []struct {
+		provider      captcha.Provider
+		challengeType captcha.ChallengeType
+	}{
+		{NewAlphanumeric(), captcha.ChallengeTypeImageText},
+		{NewMath(), captcha.ChallengeTypeImageText},
+		{NewChineseInput(), captcha.ChallengeTypeImageText},
+		{NewChineseClick(), captcha.ChallengeTypeImageClick},
+		{NewGeeTestGT4(nil), captcha.ChallengeTypeGeeTestGT4},
+	}
+
+	for _, test := range tests {
+		t.Run(test.provider.Name(), func(t *testing.T) {
+			described, ok := test.provider.(captcha.DescribedProvider)
+			if !ok {
+				t.Fatal("provider does not implement DescribedProvider")
+			}
+			descriptor := described.Descriptor()
+			if descriptor.ChallengeType != test.challengeType {
+				t.Fatalf("ChallengeType = %q, want %q", descriptor.ChallengeType, test.challengeType)
+			}
+			if descriptor.DisplayName["zh-CN"] == "" || descriptor.DisplayName["en-US"] == "" {
+				t.Fatalf("DisplayName = %#v", descriptor.DisplayName)
+			}
+			if descriptor.Secret.Label["zh-CN"] == "" || descriptor.Secret.Label["en-US"] == "" {
+				t.Fatalf("Secret.Label = %#v", descriptor.Secret.Label)
+			}
+			if len(descriptor.Fields) == 0 {
+				t.Fatal("descriptor has no configuration fields")
+			}
+			for _, field := range descriptor.Fields {
+				if field.Key == "" || field.Type == "" ||
+					field.Label["zh-CN"] == "" || field.Label["en-US"] == "" {
+					t.Fatalf("invalid field descriptor: %#v", field)
+				}
+			}
+		})
+	}
+}
+
 func payloadImage(t *testing.T, raw json.RawMessage) []byte {
 	t.Helper()
 	var payload imagePayload

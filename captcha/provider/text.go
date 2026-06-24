@@ -25,6 +25,30 @@ type Alphanumeric struct{}
 func NewAlphanumeric() *Alphanumeric { return &Alphanumeric{} }
 func (*Alphanumeric) Name() string   { return alphanumericName }
 
+func (*Alphanumeric) Descriptor() captcha.ProviderDescriptor {
+	fields := []captcha.ProviderFieldDescriptor{
+		{
+			Key: "characters", Type: fieldTypeTextarea,
+			Label:        localized("字符集合", "Character set"),
+			Help:         localized("默认使用纯数字；至少提供 8 个不同字符。", "Defaults to digits; provide at least 8 distinct characters."),
+			DefaultValue: "0123456789", Required: true, MinLength: 8,
+		},
+		{
+			Key: "length", Type: fieldTypeNumber,
+			Label:        localized("验证码长度", "Captcha length"),
+			DefaultValue: 4, Required: true,
+			Min: numberPointer(1), Max: numberPointer(12), Step: numberPointer(1),
+		},
+	}
+	fields = append(fields, imageSizeFields(defaultWidth, defaultHeight, 100, 40)...)
+	return captcha.ProviderDescriptor{
+		DisplayName:   localized("数字/字符图片", "Numeric / text image"),
+		ChallengeType: captcha.ChallengeTypeImageText,
+		Secret:        imageSecretDescriptor(),
+		Fields:        fields,
+	}
+}
+
 func (*Alphanumeric) ValidateConfig(raw json.RawMessage) error {
 	var extended struct {
 		Characters string `json:"characters"`
@@ -88,6 +112,34 @@ type mathConfig struct {
 
 func NewMath() *Math       { return &Math{} }
 func (*Math) Name() string { return mathName }
+
+func (*Math) Descriptor() captcha.ProviderDescriptor {
+	fields := []captcha.ProviderFieldDescriptor{
+		{
+			Key: "operators", Type: fieldTypeMultiSelect,
+			Label:        localized("运算符", "Operators"),
+			DefaultValue: []string{"+", "-"}, Required: true,
+			Options: []captcha.ProviderFieldOption{
+				{Value: "+", Label: localized("加法", "Addition")},
+				{Value: "-", Label: localized("减法", "Subtraction")},
+				{Value: "*", Label: localized("乘法", "Multiplication")},
+			},
+		},
+		{
+			Key: "max_operand", Type: fieldTypeNumber,
+			Label:        localized("最大操作数", "Maximum operand"),
+			DefaultValue: 20, Required: true,
+			Min: numberPointer(2), Max: numberPointer(100), Step: numberPointer(1),
+		},
+	}
+	fields = append(fields, imageSizeFields(defaultWidth, defaultHeight, 100, 40)...)
+	return captcha.ProviderDescriptor{
+		DisplayName:   localized("算术图片", "Math image"),
+		ChallengeType: captcha.ChallengeTypeImageText,
+		Secret:        imageSecretDescriptor(),
+		Fields:        fields,
+	}
+}
 
 func decodeMathConfig(raw json.RawMessage) (mathConfig, error) {
 	base, err := decodeTextConfig(raw, 1)
@@ -170,6 +222,29 @@ func NewChineseInput(options ...ChineseOption) *ChineseInput {
 	return &ChineseInput{font: defaultChineseOptions(options...).font}
 }
 func (*ChineseInput) Name() string { return chineseInputName }
+
+func (*ChineseInput) Descriptor() captcha.ProviderDescriptor {
+	fields := []captcha.ProviderFieldDescriptor{
+		{
+			Key: "characters", Type: fieldTypeTextarea,
+			Label:        localized("中文字符集合", "Chinese character set"),
+			DefaultValue: string(defaultChinese), Required: true,
+		},
+		{
+			Key: "length", Type: fieldTypeNumber,
+			Label:        localized("验证码长度", "Captcha length"),
+			DefaultValue: 4, Required: true,
+			Min: numberPointer(1), Max: numberPointer(12), Step: numberPointer(1),
+		},
+	}
+	fields = append(fields, imageSizeFields(defaultWidth, defaultHeight, 100, 40)...)
+	return captcha.ProviderDescriptor{
+		DisplayName:   localized("中文输入图片", "Chinese input image"),
+		ChallengeType: captcha.ChallengeTypeImageText,
+		Secret:        imageSecretDescriptor(),
+		Fields:        fields,
+	}
+}
 
 func decodeChineseConfig(raw json.RawMessage) (textConfig, []rune, error) {
 	config, err := decodeTextConfig(raw, 4)
