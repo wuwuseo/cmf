@@ -24,7 +24,10 @@ func newTestConfig() *config.Config {
 func TestNewBigCache_Create(t *testing.T) {
 	cfg := newTestConfig()
 	ctx := context.Background()
-	store := driver.NewBigCache(ctx, cfg)
+	store, err := driver.NewBigCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewBigCache 创建失败: %v", err)
+	}
 	if store == nil {
 		t.Error("NewBigCache 返回值不应为 nil")
 	}
@@ -33,12 +36,15 @@ func TestNewBigCache_Create(t *testing.T) {
 func TestNewBigCache_GetSet(t *testing.T) {
 	cfg := newTestConfig()
 	ctx := context.Background()
-	store := driver.NewBigCache(ctx, cfg)
+	store, err := driver.NewBigCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewBigCache 创建失败: %v", err)
+	}
 
 	key := "test_key_1"
 	value := []byte("test_value_1")
 
-	err := store.Set(ctx, key, value)
+	err = store.Set(ctx, key, value)
 	if err != nil {
 		t.Errorf("Set 操作失败: %v", err)
 	}
@@ -55,7 +61,10 @@ func TestNewBigCache_GetSet(t *testing.T) {
 func TestNewBigCache_Delete(t *testing.T) {
 	cfg := newTestConfig()
 	ctx := context.Background()
-	store := driver.NewBigCache(ctx, cfg)
+	store, err := driver.NewBigCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewBigCache 创建失败: %v", err)
+	}
 
 	key := "test_key_delete"
 	value := []byte("test_value_delete")
@@ -63,7 +72,7 @@ func TestNewBigCache_Delete(t *testing.T) {
 	_ = store.Set(ctx, key, value)
 	_ = store.Delete(ctx, key)
 
-	_, err := store.Get(ctx, key)
+	_, err = store.Get(ctx, key)
 	if err == nil {
 		t.Error("删除后 Get 应该返回错误")
 	}
@@ -72,9 +81,12 @@ func TestNewBigCache_Delete(t *testing.T) {
 func TestNewBigCache_GetNonExistentKey(t *testing.T) {
 	cfg := newTestConfig()
 	ctx := context.Background()
-	store := driver.NewBigCache(ctx, cfg)
+	store, err := driver.NewBigCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewBigCache 创建失败: %v", err)
+	}
 
-	_, err := store.Get(ctx, "non_existent_key")
+	_, err = store.Get(ctx, "non_existent_key")
 	if err == nil {
 		t.Error("不存在的 key 应该返回错误")
 	}

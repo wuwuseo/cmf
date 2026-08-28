@@ -9,6 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/wuwuseo/cmf/config"
+	"github.com/wuwuseo/cmf/manager"
 )
 
 // Options 定义Redis客户端的配置选项
@@ -29,8 +30,10 @@ type Options struct {
 	TLSConfig       *tls.Config   // TLS配置，用于加密连接
 }
 
-// 使用sync.Map来存储单例Redis客户端实例
-var clientMap sync.Map
+// 使用 per-config 的 Manager 管理按名创建的 Redis 客户端
+// 以 *config.Config 指针为 key：不同配置（如测试用例）各自持有一组客户端实例，避免连接串扰
+// ponytail: 以 cfg 指针为 key，天花板是同一配置的多个副本各建一套客户端；升级路径：按连接参数指纹缓存
+var managers sync.Map // *config.Config -> *manager.Manager[*redis.Client, config.Redis]
 
 // NewClient 创建一个新的Redis客户端实例
 // 该函数封装了go-redis的NewClient函数，提供了更便捷的使用方式
@@ -54,65 +57,51 @@ func NewClient(options *Options) *redis.Client {
 }
 
 // NewClientFromConfig 从配置对象创建Redis客户端实例
-// 该函数使用应用的全局配置来初始化Redis客户端，并使用sync.Map保持单例模式
-func NewClientFromConfig(ctx context.Context, config *config.Config, storeName ...string) (*redis.Client, error) {
-	// 从配置中获取Redis相关配置
-	// 处理存储名称参数
-	redisDefault := config.Redis.Default
-	var storeKey string
-	if len(storeName) > 0 {
-		storeKey = storeName[0]
-	} else {
-		storeKey = redisDefault
+// storeName 指定 redis.connections 中的连接名（不传 = 默认连接），首次访问惰性创建并验证连接，
+// 之后返回缓存的同一客户端。配置多个 connections 时可按名切换不同 Redis 实例。
+func NewClientFromConfig(ctx context.Context, cfg *config.Config, storeName ...string) (*redis.Client, error) {
+	def := cfg.Redis.Default
+	if def == "" {
+		def = "redis"
 	}
 
-	// 检查是否已经存在该storeName的客户端实例
-	if client, ok := clientMap.Load(storeKey); ok {
-		return client.(*redis.Client), nil
-	}
+	mAny, _ := managers.LoadOrStore(cfg, manager.New[*redis.Client, config.Redis](
+		def,
+		func() map[string]config.Redis { return cfg.Redis.Connections },
+		func(name string, rc config.Redis) (*redis.Client, error) {
+			options := &Options{
+				Addr:            rc.Addr,
+				Username:         rc.Username,
+				Password:         rc.Password,
+				DB:               rc.DB,
+				DialTimeout:      time.Duration(rc.DialTimeout) * time.Second,
+				ReadTimeout:      time.Duration(rc.ReadTimeout) * time.Second,
+				WriteTimeout:     time.Duration(rc.WriteTimeout) * time.Second,
+				PoolSize:         rc.PoolSize,
+				MinIdleConns:     rc.MinIdleConns,
+				MaxIdleConns:     rc.MaxIdleConns,
+				ConnMaxIdleTime:  time.Duration(rc.ConnMaxIdleTime) * time.Minute,
+				ConnMaxLifetime:  time.Duration(rc.ConnMaxLifetime) * time.Hour,
+			}
 
-	redisConfig, ok := config.Redis.Connections[storeKey]
-	if !ok {
-		return nil, fmt.Errorf("未找到Redis配置: %s", storeKey)
-	}
+			// 如果需要TLS连接，配置TLS
+			if rc.UseTLS {
+				options.TLSConfig = &tls.Config{}
+				// 可以在这里添加更多TLS配置
+			}
 
-	// 创建选项对象，使用配置中的值
-	options := &Options{
-		Addr:            redisConfig.Addr,
-		Username:        redisConfig.Username,
-		Password:        redisConfig.Password,
-		DB:              redisConfig.DB,
-		DialTimeout:     time.Duration(redisConfig.DialTimeout) * time.Second,
-		ReadTimeout:     time.Duration(redisConfig.ReadTimeout) * time.Second,
-		WriteTimeout:    time.Duration(redisConfig.WriteTimeout) * time.Second,
-		PoolSize:        redisConfig.PoolSize,
-		MinIdleConns:    redisConfig.MinIdleConns,
-		MaxIdleConns:    redisConfig.MaxIdleConns,
-		ConnMaxIdleTime: time.Duration(redisConfig.ConnMaxIdleTime) * time.Minute,
-		ConnMaxLifetime: time.Duration(redisConfig.ConnMaxLifetime) * time.Hour,
-	}
+			client := NewClient(options)
 
-	// 如果需要TLS连接，配置TLS
-	if redisConfig.UseTLS {
-		options.TLSConfig = &tls.Config{}
-		// 可以在这里添加更多TLS配置
-	}
+			// 验证连接：失败时关闭客户端并返回错误（Manager 不会缓存失败的实例）
+			// ponytail: Ping 固定用 context.Background()，天花板是工厂闭包无法接收调用方 ctx；升级路径：Manager.Get 增加 ctx 透传
+			if err := client.Ping(context.Background()).Err(); err != nil {
+				client.Close()
+				return nil, fmt.Errorf("连接Redis失败: %w", err)
+			}
+			return client, nil
+		},
+	))
+	m := mAny.(*manager.Manager[*redis.Client, config.Redis])
 
-	// 创建客户端
-	client := NewClient(options)
-
-	// 测试连接
-	if err := client.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("连接Redis失败: %w", err)
-	}
-
-	// 将客户端存储到sync.Map中，确保单例
-	actual, loaded := clientMap.LoadOrStore(storeKey, client)
-	if loaded {
-		// 如果已经存在，则关闭新创建的客户端，返回已存在的客户端
-		client.Close()
-		return actual.(*redis.Client), nil
-	}
-
-	return client, nil
+	return m.Get(storeName...)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/eko/gocache/lib/v4/cache"
@@ -12,6 +11,7 @@ import (
 	"github.com/google/wire"
 	"github.com/wuwuseo/cmf/cache/driver"
 	"github.com/wuwuseo/cmf/config"
+	"github.com/wuwuseo/cmf/manager"
 )
 
 // ProviderSet 缓存模块的 Wire Provider 集合
@@ -21,80 +21,68 @@ type Cache[T any] struct {
 	ctx context.Context
 	*cache.Cache[T]
 	cfg      *config.Config
-	stores   *sync.Map // 用于存储不同存储类型的缓存实例
-	storeKey string    // 当前存储的键
+	mgr      *manager.Manager[gostore.StoreInterface, config.StoreConfig]
+	storeKey string // 当前存储的键
 }
 
 // NewCache 创建一个缓存实例，默认存储[]byte类型的数据
 func NewCache(ctx context.Context, cfg *config.Config) *Cache[[]byte] {
 	// 获取默认缓存存储配置
 	defaultStoreName := cfg.Cache.Default
-	storeConfig, exists := cfg.Cache.Stores[defaultStoreName]
-	if !exists {
-		panic("cache driver not found")
+	if defaultStoreName == "" {
+		defaultStoreName = "memory"
 	}
 
-	var store gostore.StoreInterface
-	switch storeConfig.Driver {
-	case "redis":
-		store = driver.NewRedisCache(ctx, cfg)
+	mgr := manager.New[gostore.StoreInterface, config.StoreConfig](
+		defaultStoreName,
+		func() map[string]config.StoreConfig { return cfg.Cache.Stores },
+		func(name string, sc config.StoreConfig) (gostore.StoreInterface, error) {
+			switch sc.Driver {
+			case "redis":
+				return driver.NewRedisCache(ctx, cfg, name)
+			case "memory":
+				return driver.NewBigCache(ctx, cfg, name)
+			default:
+				return nil, fmt.Errorf("不支持的缓存驱动: %s", sc.Driver)
+			}
+		},
+	)
 
-	case "memory":
-		store = driver.NewBigCache(ctx, cfg)
-	default:
-		panic("cache driver not found")
-	}
-
-	cacheInstance := &Cache[[]byte]{
+	return &Cache[[]byte]{
 		ctx:      ctx,
-		Cache:    cache.New[[]byte](store),
+		Cache:    cache.New[[]byte](mgr.MustGet()),
 		cfg:      cfg,
-		stores:   &sync.Map{},
+		mgr:      mgr,
 		storeKey: defaultStoreName,
 	}
-
-	// 将默认存储实例存储到sync.Map中
-	cacheInstance.stores.Store(defaultStoreName, cacheInstance)
-
-	return cacheInstance
 }
 
 // Store 切换到指定名称的缓存存储
+// 首次访问惰性创建驱动实例（按该名称的配置初始化），之后返回缓存的同一驱动
+// 返回的实例与原实例共享配置，但读写互不影响
 func (c *Cache[T]) Store(storeName string) (*Cache[T], error) {
-	// 首先检查是否已经存在该存储实例
-	if store, ok := c.stores.Load(storeName); ok {
-		return store.(*Cache[T]), nil
+	store, err := c.mgr.Get(storeName)
+	if err != nil {
+		return nil, err
 	}
 
-	// 获取指定的缓存存储配置
-	storeConfig, exists := c.cfg.Cache.Stores[storeName]
-	if !exists {
-		return nil, fmt.Errorf("cache store '%s' not found", storeName)
-	}
-
-	var store gostore.StoreInterface
-	switch storeConfig.Driver {
-	case "redis":
-		store = driver.NewRedisCache(c.ctx, c.cfg)
-
-	case "memory":
-		store = driver.NewBigCache(c.ctx, c.cfg)
-	default:
-		return nil, fmt.Errorf("unsupported cache driver: %s", storeConfig.Driver)
-	}
-
-	cacheInstance := &Cache[T]{
+	return &Cache[T]{
 		ctx:      c.ctx,
 		Cache:    cache.New[T](store),
 		cfg:      c.cfg,
-		stores:   c.stores, // 共享同一个sync.Map
+		mgr:      c.mgr,
 		storeKey: storeName,
-	}
+	}, nil
+}
 
-	// 将新创建的存储实例存储到sync.Map中
-	c.stores.Store(storeName, cacheInstance)
+// StoreKey 返回当前实例使用的存储名
+func (c *Cache[T]) StoreKey() string {
+	return c.storeKey
+}
 
-	return cacheInstance, nil
+// Close 关闭所有已创建的缓存驱动实例（bigcache/redis 驱动均支持 Close）
+func (c *Cache[T]) Close() error {
+	return c.mgr.Close()
 }
 
 // TypedCache 提供类型安全的缓存操作

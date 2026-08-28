@@ -38,6 +38,21 @@ type Database struct {
 	ConnMaxIdleTime int    `mapstructure:"conn_max_idle_time"`
 }
 
+// StoreConfig 缓存存储配置
+// 使用类型别名（而非新定义类型），保证既有的匿名结构体字面量赋值完全兼容
+type StoreConfig = struct {
+	Driver     string `mapstructure:"driver"`      // 缓存驱动类型，如 bigcache, memory
+	DefaultTTL int    `mapstructure:"default_ttl"` // 默认缓存过期时间（秒）
+	Options    any    `mapstructure:"options"`     // 缓存驱动选项
+}
+
+// DiskConfig 文件系统磁盘配置
+// 使用类型别名（而非新定义类型），保证既有的匿名结构体字面量赋值完全兼容
+type DiskConfig = struct {
+	Driver  string `mapstructure:"driver"`  // 存储驱动类型，如 local, s3
+	Options any    `mapstructure:"options"` // 驱动选项
+}
+
 type Config struct {
 	App struct {
 		Name                string `mapstructure:"name"`
@@ -80,12 +95,8 @@ type Config struct {
 
 	// 缓存配置
 	Cache struct {
-		Default string `mapstructure:"default"` // 默认缓存存储
-		Stores  map[string]struct {
-			Driver     string `mapstructure:"driver"`      // 缓存驱动类型，如 bigcache, memory
-			DefaultTTL int    `mapstructure:"default_ttl"` // 默认缓存过期时间（秒）
-			Options    any    `mapstructure:"options"`     // 缓存驱动选项
-		} `mapstructure:"stores"`
+		Default string                  `mapstructure:"default"` // 默认缓存存储
+		Stores  map[string]StoreConfig `mapstructure:"stores"`
 	} `mapstructure:"cache"`
 
 	Redis struct {
@@ -100,12 +111,9 @@ type Config struct {
 	} `mapstructure:"captcha"`
 
 	Filesystem struct {
-		Default    string `mapstructure:"default"`
-		IsAndLocal bool   `mapstructure:"is_and_local"` // 是否同时存储在本地文件系统
-		Disks      map[string]struct {
-			Driver  string `mapstructure:"driver"`
-			Options any    `mapstructure:"options"`
-		} `mapstructure:"disks"`
+		Default    string                  `mapstructure:"default"`
+		IsAndLocal bool                    `mapstructure:"is_and_local"` // 是否同时存储在本地文件系统
+		Disks      map[string]DiskConfig `mapstructure:"disks"`
 	} `mapstructure:"filesystem"`
 
 	Casbin struct {

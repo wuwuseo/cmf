@@ -66,7 +66,10 @@ func newRedisConfig() *config.Config {
 func TestNewRedisCache_Create(t *testing.T) {
 	cfg := newRedisConfig()
 	ctx := context.Background()
-	store := driver.NewRedisCache(ctx, cfg)
+	store, err := driver.NewRedisCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewRedisCache 创建失败: %v", err)
+	}
 	if store == nil {
 		t.Error("NewRedisCache 返回值不应为 nil")
 	}
@@ -75,12 +78,15 @@ func TestNewRedisCache_Create(t *testing.T) {
 func TestNewRedisCache_GetSet(t *testing.T) {
 	cfg := newRedisConfig()
 	ctx := context.Background()
-	store := driver.NewRedisCache(ctx, cfg)
+	store, err := driver.NewRedisCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewRedisCache 创建失败: %v", err)
+	}
 
 	key := "test_redis_key"
 	value := []byte("test_redis_value")
 
-	err := store.Set(ctx, key, value)
+	err = store.Set(ctx, key, value)
 	if err != nil {
 		t.Errorf("Set 操作失败: %v", err)
 	}
@@ -99,7 +105,10 @@ func TestNewRedisCache_GetSet(t *testing.T) {
 func TestNewRedisCache_Delete(t *testing.T) {
 	cfg := newRedisConfig()
 	ctx := context.Background()
-	store := driver.NewRedisCache(ctx, cfg)
+	store, err := driver.NewRedisCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewRedisCache 创建失败: %v", err)
+	}
 
 	key := "test_redis_delete"
 	value := []byte("test_redis_delete_value")
@@ -107,7 +116,7 @@ func TestNewRedisCache_Delete(t *testing.T) {
 	_ = store.Set(ctx, key, value)
 	_ = store.Delete(ctx, key)
 
-	_, err := store.Get(ctx, key)
+	_, err = store.Get(ctx, key)
 	if err == nil {
 		t.Error("删除后 Get 应该返回错误")
 	}
@@ -116,9 +125,12 @@ func TestNewRedisCache_Delete(t *testing.T) {
 func TestNewRedisCache_GetNonExistentKey(t *testing.T) {
 	cfg := newRedisConfig()
 	ctx := context.Background()
-	store := driver.NewRedisCache(ctx, cfg)
+	store, err := driver.NewRedisCache(ctx, cfg)
+	if err != nil {
+		t.Fatalf("NewRedisCache 创建失败: %v", err)
+	}
 
-	_, err := store.Get(ctx, "non_existent_redis_key")
+	_, err = store.Get(ctx, "non_existent_redis_key")
 	if err == nil {
 		t.Error("不存在的 key 应该返回错误")
 	}

@@ -343,7 +343,16 @@ func TestCache_Store_Singleton(t *testing.T) {
 
 	store1, _ := c.Store("another")
 	store2, _ := c.Store("another")
-	if store1 != store2 {
-		t.Fatal("同一存储 Store() 两次应该返回同一实例")
+	// Cache[T] 是无状态薄包装，单例语义在底层驱动：两次 Store() 应共享同一驱动实例
+	// 验证方式：store1 写入的数据可从 store2 读到
+	if err := store1.Set(ctx, "singleton_key", []byte("singleton_value")); err != nil {
+		t.Fatalf("Set 失败: %v", err)
+	}
+	got, err := store2.Get(ctx, "singleton_key")
+	if err != nil {
+		t.Fatalf("同一存储 Store() 两次应共享底层驱动实例（Get 失败: %v）", err)
+	}
+	if string(got) != "singleton_value" {
+		t.Fatalf("同一存储 Store() 两次应共享底层驱动实例，期望 singleton_value，得到 %s", got)
 	}
 }

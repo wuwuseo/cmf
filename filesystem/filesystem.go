@@ -227,3 +227,17 @@ func NewFilesystemFromConfig(cfg *config.Config) (*Filesystem, error) {
 		Adapter: adapter,
 	}, nil
 }
+
+// Disk 按名获取指定磁盘的文件系统实例
+// 配置了多个 filesystem.disks 时（如 local + s3），可用此方法切换不同磁盘
+// 同名磁盘底层适配器为同一单例；显式指定的磁盘不参与 IsAndLocal 双写逻辑
+func Disk(cfg *config.Config, name string) (*Filesystem, error) {
+	adapter, err := NewStorageDriver(cfg, name)
+	if err != nil {
+		return nil, err
+	}
+	return &Filesystem{
+		Config:  *cfg,
+		Adapter: adapter,
+	}, nil
+}
