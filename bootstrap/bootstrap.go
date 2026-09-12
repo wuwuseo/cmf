@@ -215,20 +215,7 @@ func (b *Bootstrap) Run() error {
 	b.loadMiddlewares(app)
 	b.setupRoutes(app)
 
-	// 注册 Fiber v3 Hooks 进行生命周期管理
-	app.Hooks().OnPreShutdown(func() error {
-		log.Warn("应用准备关闭，执行清理任务...")
-		return b.cleanup()
-	})
-
-	app.Hooks().OnPostShutdown(func(err error) error {
-		if err != nil {
-			log.Error("应用关闭失败: " + err.Error())
-		} else {
-			log.Warn("Fiber 已成功关闭")
-		}
-		return nil
-	})
+	b.registerShutdownHooks(app)
 
 	// v3 要求在 goroutine 中运行 Listen，以支持 Hooks
 	go func() {
@@ -250,6 +237,25 @@ func (b *Bootstrap) Run() error {
 		log.Error("关闭失败: " + err.Error())
 	}
 	return nil
+}
+
+func (b *Bootstrap) registerShutdownHooks(app *fiber.App) {
+	app.Hooks().OnPreShutdown(func() error {
+		log.Warn("应用准备关闭，等待 HTTP 请求结束...")
+		return nil
+	})
+	app.Hooks().OnPostShutdown(func(err error) error {
+		// HTTP 已停止接收并排空请求，此时才能释放队列、数据库等共享依赖。
+		if cleanupErr := b.cleanup(); cleanupErr != nil {
+			log.Error("应用资源清理失败", zap.Error(cleanupErr))
+		}
+		if err != nil {
+			log.Error("应用关闭失败: " + err.Error())
+		} else {
+			log.Warn("Fiber 已成功关闭")
+		}
+		return nil
+	})
 }
 
 // loadMiddlewares 加载所有注册的中间件
