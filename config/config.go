@@ -95,7 +95,7 @@ type Config struct {
 
 	// 缓存配置
 	Cache struct {
-		Default string                  `mapstructure:"default"` // 默认缓存存储
+		Default string                 `mapstructure:"default"` // 默认缓存存储
 		Stores  map[string]StoreConfig `mapstructure:"stores"`
 	} `mapstructure:"cache"`
 
@@ -110,9 +110,25 @@ type Config struct {
 		KeyPrefix       string `mapstructure:"key_prefix"`
 	} `mapstructure:"captcha"`
 
+	// 任务队列配置：Redis 连接参数复用 redis.connections 中的命名连接，
+	// 运行参数（并发、队列优先级、重试等）见 queue 包的 Config。
+	Queue struct {
+		RedisConnection string         `mapstructure:"redis_connection"`  // 引用 redis.connections 中的连接名
+		Concurrency     int            `mapstructure:"concurrency"`       // 并发 worker 数，0 表示取 CPU 核数
+		Queues          map[string]int `mapstructure:"queues"`            // 消费的队列及优先级权重，缺省仅 default
+		StrictPriority  bool           `mapstructure:"strict_priority"`   // 严格优先级模式
+		MaxRetry        int            `mapstructure:"max_retry"`         // 默认最大重试次数
+		Timeout         int            `mapstructure:"timeout"`           // 单任务默认处理超时（秒），0 不限制
+		Retention       int            `mapstructure:"retention"`         // completed 保留时长（秒），0 完成即删
+		MaxQueueSize    int            `mapstructure:"max_queue_size"`    // 每队列存量任务准入阈值，包含保留的历史
+		MaxPayloadBytes int            `mapstructure:"max_payload_bytes"` // 单任务载荷字节上限
+		EnableMonitor   bool           `mapstructure:"enable_monitor"`    // 是否挂载 asynqmon 只读监控页
+		MonitorPath     string         `mapstructure:"monitor_path"`      // 监控页挂载路径
+	} `mapstructure:"queue"`
+
 	Filesystem struct {
-		Default    string                  `mapstructure:"default"`
-		IsAndLocal bool                    `mapstructure:"is_and_local"` // 是否同时存储在本地文件系统
+		Default    string                `mapstructure:"default"`
+		IsAndLocal bool                  `mapstructure:"is_and_local"` // 是否同时存储在本地文件系统
 		Disks      map[string]DiskConfig `mapstructure:"disks"`
 	} `mapstructure:"filesystem"`
 
@@ -201,6 +217,19 @@ func InitConfig() {
 		v.SetDefault("captcha.store", "memory")
 		v.SetDefault("captcha.redis_connection", "redis")
 		v.SetDefault("captcha.key_prefix", "captcha")
+
+		// 任务队列默认配置
+		v.SetDefault("queue.redis_connection", "redis")
+		v.SetDefault("queue.concurrency", 10)
+		v.SetDefault("queue.queues.default", 10)
+		v.SetDefault("queue.strict_priority", false)
+		v.SetDefault("queue.max_retry", 3)
+		v.SetDefault("queue.timeout", 600)
+		v.SetDefault("queue.retention", 0)
+		v.SetDefault("queue.max_queue_size", 10000)
+		v.SetDefault("queue.max_payload_bytes", 65536)
+		v.SetDefault("queue.enable_monitor", false)
+		v.SetDefault("queue.monitor_path", "/api/v1/admin/auth/queue-monitor")
 
 		// 日志默认配置
 		v.SetDefault("log.level", "info")
