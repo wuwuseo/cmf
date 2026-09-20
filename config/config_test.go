@@ -386,6 +386,44 @@ func TestSaveConfigDefaultValue(t *testing.T) {
 // =============================================================================
 
 // TestConfigNestedStructs 测试 Config 所有嵌套结构体的赋值和读取
+func TestEnvironmentOverridesSurviveSaveWithoutLeakingSecrets(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(file, []byte("app:\n  name: old\n  secret: ''\ndatabase:\n  connections:\n    default:\n      port: 3306\n      name: unused\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CMF_APP_SECRET", "test-only-environment-secret")
+	t.Setenv("CMF_DATABASE_CONNECTIONS_DEFAULT_PORT", "33306")
+	t.Setenv("CMF_DATABASE_CONNECTIONS_DEFAULT_NAME", "isolated_test")
+	vv := config.NewViper("config")
+	vv.SetConfigFile(file)
+	vv.AutomaticEnv()
+	if err := vv.ReadInConfig(); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		var cfg config.Config
+		if err := vv.Unmarshal(&cfg); err != nil {
+			t.Fatal(err)
+		}
+		if cfg.App.Secret != "test-only-environment-secret" || cfg.Database.Connections["default"].Port != 33306 || cfg.Database.Connections["default"].Name != "isolated_test" {
+			t.Fatal("nested environment overrides not applied")
+		}
+		if err := config.SaveConfig(vv, "app", "name", "updated", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	content, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(content), "test-only-environment-secret") || strings.Contains(string(content), "isolated_test") || strings.Contains(string(content), "33306") {
+		t.Fatal("environment overrides leaked to configuration file")
+	}
+	if vv.GetString("app.name") != "updated" {
+		t.Fatal("saved setting not visible at runtime")
+	}
+}
+
 func TestConfigNestedStructs(t *testing.T) {
 	v := viper.New()
 
@@ -773,5 +811,3 @@ func TestNewConfig(t *testing.T) {
 		t.Errorf("Redis.Default 默认值: 期望 %q, 得到 %q", "redis", c.Redis.Default)
 	}
 }
-
-

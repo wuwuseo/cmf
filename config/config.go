@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
@@ -162,6 +163,7 @@ func NewViperWithOptions(name string, envPrefix string) *viper.Viper {
 	Viper := viper.New()
 	// 初始化配置
 	Viper.SetEnvPrefix(envPrefix)
+	Viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	Viper.SetConfigName(name)
 	Viper.AddConfigPath("./config")
 	return Viper
@@ -323,41 +325,20 @@ func (c *Config) SaveConfig(section string, key string, value any, defaultValue 
 	return SaveConfig(v, section, key, value, defaultValue)
 }
 
-func SaveConfig(viper *viper.Viper, section string, key string, value any, defaultValue any) error {
-	// 读取现有配置
-	var config map[string]any
-	viper.SetEnvKeyReplacer(nil)
-	err := viper.Unmarshal(&config)
-	if err != nil {
+func SaveConfig(runtime *viper.Viper, section string, key string, value any, defaultValue any) error {
+	// Read only the file: environment secrets and runtime overrides must never
+	// become persisted configuration when an unrelated setting is changed.
+	fileConfig := viper.New()
+	fileConfig.SetConfigFile(runtime.ConfigFileUsed())
+	if err := fileConfig.ReadInConfig(); err != nil {
 		return err
 	}
-
-	// 如果指定的 section 不存在，则创建它
-	if _, ok := config[section]; !ok {
-		config[section] = make(map[string]any)
-	}
-
-	// 检查 section 是否是映射类型
-	sectionMap, ok := config[section].(map[string]any)
-	if !ok {
-		// 如果不是映射类型，将其替换为新的映射
-		sectionMap = make(map[string]any)
-		config[section] = sectionMap
-	}
-
-	// 使用默认值如果用户没有提供新值
 	if value == nil {
 		value = defaultValue
 	}
-
-	// 更新或添加键值对
-	sectionMap[key] = value
-
-	// 将更新后的配置写回文件
-	viper.Set(section, config[section])
-	if err := viper.WriteConfig(); err != nil {
+	fileConfig.Set(section+"."+key, value)
+	if err := fileConfig.WriteConfig(); err != nil {
 		return err
 	}
-
-	return nil
+	return runtime.ReadInConfig()
 }
