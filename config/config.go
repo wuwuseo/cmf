@@ -114,6 +114,8 @@ type Config struct {
 	// 任务队列配置：Redis 连接参数复用 redis.connections 中的命名连接，
 	// 运行参数（并发、队列优先级、重试等）见 queue 包的 Config。
 	Queue struct {
+		Driver          string         `mapstructure:"driver"`            // asynq (default), rabbitmq, nats, nsq, kafka, amqp10
+		Namespace       string         `mapstructure:"namespace"`         // 隔离新后端的资源名
 		RedisConnection string         `mapstructure:"redis_connection"`  // 引用 redis.connections 中的连接名
 		Concurrency     int            `mapstructure:"concurrency"`       // 并发 worker 数，0 表示取 CPU 核数
 		Queues          map[string]int `mapstructure:"queues"`            // 消费的队列及优先级权重，缺省仅 default
@@ -125,6 +127,27 @@ type Config struct {
 		MaxPayloadBytes int            `mapstructure:"max_payload_bytes"` // 单任务载荷字节上限
 		EnableMonitor   bool           `mapstructure:"enable_monitor"`    // 是否挂载 asynqmon 只读监控页
 		MonitorPath     string         `mapstructure:"monitor_path"`      // 监控页挂载路径
+		RabbitMQ        struct {
+			URL           string `mapstructure:"url"`
+			ManagementURL string `mapstructure:"management_url"`
+		} `mapstructure:"rabbitmq"`
+		NATS struct {
+			URL string `mapstructure:"url"`
+		} `mapstructure:"nats"`
+		NSQ struct {
+			NSQD    string `mapstructure:"nsqd"`
+			Lookupd string `mapstructure:"lookupd"`
+			HTTP    string `mapstructure:"http"`
+		} `mapstructure:"nsq"`
+		Kafka struct {
+			Brokers           []string `mapstructure:"brokers"`
+			Group             string   `mapstructure:"group"`
+			Partitions        int32    `mapstructure:"partitions"`
+			ReplicationFactor int16    `mapstructure:"replication_factor"`
+		} `mapstructure:"kafka"`
+		AMQP10 struct {
+			URL string `mapstructure:"url"`
+		} `mapstructure:"amqp10"`
 	} `mapstructure:"queue"`
 
 	Filesystem struct {

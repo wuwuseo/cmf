@@ -9,8 +9,9 @@ import (
 // 队列包统一错误。asynq 的底层错误在边界处转换为以下错误或其包装，
 // 调用方通过 errors.Is 判断。
 var (
-	ErrQueueFull       = errors.New("queue: 队列已达到容量阈值")
-	ErrPayloadTooLarge = errors.New("queue: 任务载荷超过字节上限")
+	ErrUnsupportedCapability = errors.New("queue: 当前后端不支持该操作")
+	ErrQueueFull             = errors.New("queue: 队列已达到容量阈值")
+	ErrPayloadTooLarge       = errors.New("queue: 任务载荷超过字节上限")
 	// ErrRedisConnectionNotFound 配置中不存在指定的 Redis 连接。
 	ErrRedisConnectionNotFound = errors.New("queue: redis 连接不存在")
 
@@ -21,7 +22,8 @@ var (
 	ErrInvalidTaskState = errors.New("queue: 非法的任务状态")
 
 	// ErrTaskNotFound 任务不存在（可能已被删除或过期）。
-	ErrTaskNotFound = errors.New("queue: 任务不存在")
+	ErrTaskNotFound       = errors.New("queue: 任务不存在")
+	ErrMessageNotRetained = errors.New("queue: 原始消息不存在或已不再保留")
 
 	// ErrQueueNotFound 队列不存在。
 	ErrQueueNotFound = errors.New("queue: 队列不存在")

@@ -1,0 +1,495 @@
+package queue
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/wuwuseo/cmf/config"
+)
+
+type runtimeTaskIDKey struct{}
+type runtimeAttemptKey struct{}
+
+// Capabilities describes the operations which have their documented semantics
+// on the selected broker. Unsupported actions must never be silently ignored.
+type Capabilities struct {
+	Driver         string `json:"driver"`
+	TaskList       bool   `json:"task_list"`
+	TaskGet        bool   `json:"task_get"`
+	TaskStats      bool   `json:"task_stats"`
+	TaskRetry      bool   `json:"task_retry"`
+	TaskDelete     bool   `json:"task_delete"`
+	TaskCancel     bool   `json:"task_cancel"`
+	Delay          bool   `json:"delay"`
+	Unique         bool   `json:"unique"`
+	MaxRetry       bool   `json:"max_retry"`
+	Retention      bool   `json:"retention"`
+	StrictPriority bool   `json:"strict_priority"`
+	QueuePause     bool   `json:"queue_pause"`
+	RawMessageGet  bool   `json:"raw_message_get"`
+}
+
+// QueueOverview holds broker observations. Nil counts mean unavailable, not 0.
+type QueueOverview struct {
+	Queue            string            `json:"queue"`
+	Source           string            `json:"source"`
+	Ready            *int64            `json:"ready"`
+	Active           *int64            `json:"active"`
+	Consumers        *int64            `json:"consumers"`
+	Lag              *int64            `json:"lag"`
+	Partitions       *int64            `json:"partitions"`
+	ConsumerOffset   *int64            `json:"consumer_offset"`
+	EndOffset        *int64            `json:"end_offset"`
+	Paused           *bool             `json:"paused"`
+	Connected        *bool             `json:"connected"`
+	PartitionOffsets []PartitionOffset `json:"partition_offsets"`
+	Healthy          bool              `json:"healthy"`
+	Error            string            `json:"error,omitempty"`
+}
+
+type PartitionOffset struct {
+	Partition int32  `json:"partition"`
+	Committed *int64 `json:"committed"`
+	End       *int64 `json:"end"`
+	Lag       *int64 `json:"lag"`
+}
+
+func unavailableOverviews(queues []string, source string, err error) []QueueOverview {
+	out := make([]QueueOverview, 0, len(queues))
+	for _, queue := range queues {
+		out = append(out, QueueOverview{Queue: queue, Source: source, Error: err.Error()})
+	}
+	return out
+}
+
+type RawMessage struct {
+	Queue    string `json:"queue"`
+	Sequence uint64 `json:"sequence"`
+	Payload  []byte `json:"payload"`
+}
+
+type RuntimeConfig struct {
+	Driver, Namespace                                                                 string
+	Legacy                                                                            Config
+	Queues                                                                            map[string]int
+	Concurrency, MaxPayloadBytes                                                      int
+	Timeout                                                                           time.Duration
+	RabbitMQURL, RabbitMQManagementURL, NATSURL, NSQD, NSQLookupd, NSQHTTP, AMQP10URL string
+	KafkaBrokers                                                                      []string
+	KafkaGroup                                                                        string
+	KafkaPartitions                                                                   int32
+	KafkaReplicationFactor                                                            int16
+}
+
+func RuntimeConfigFromApp(cfg *config.Config) (RuntimeConfig, error) {
+	driver := canonicalDriver(cfg.Queue.Driver)
+	if driver == "" {
+		driver = "asynq"
+	}
+	rc := RuntimeConfig{
+		Driver: driver, Namespace: cfg.Queue.Namespace, Queues: cfg.Queue.Queues,
+		Concurrency: cfg.Queue.Concurrency, MaxPayloadBytes: cfg.Queue.MaxPayloadBytes,
+		Timeout:     time.Duration(cfg.Queue.Timeout) * time.Second,
+		RabbitMQURL: cfg.Queue.RabbitMQ.URL, RabbitMQManagementURL: cfg.Queue.RabbitMQ.ManagementURL, NATSURL: cfg.Queue.NATS.URL,
+		NSQD: cfg.Queue.NSQ.NSQD, NSQLookupd: cfg.Queue.NSQ.Lookupd, NSQHTTP: cfg.Queue.NSQ.HTTP,
+		KafkaBrokers: cfg.Queue.Kafka.Brokers, KafkaGroup: cfg.Queue.Kafka.Group,
+		KafkaPartitions: cfg.Queue.Kafka.Partitions, KafkaReplicationFactor: cfg.Queue.Kafka.ReplicationFactor,
+		AMQP10URL: cfg.Queue.AMQP10.URL,
+	}
+	if rc.Namespace == "" {
+		rc.Namespace = "admin"
+	}
+	if len(rc.Queues) == 0 {
+		rc.Queues = map[string]int{"default": 10}
+	}
+	if rc.Concurrency <= 0 {
+		rc.Concurrency = 4
+	}
+	if rc.MaxPayloadBytes <= 0 {
+		rc.MaxPayloadBytes = 64 * 1024
+	}
+	if driver == "asynq" {
+		legacy, err := NewConfigFromApp(cfg, cfg.Queue.RedisConnection)
+		if err != nil {
+			return RuntimeConfig{}, err
+		}
+		legacy.Concurrency = rc.Concurrency
+		legacy.Queues = rc.Queues
+		legacy.StrictPriority = cfg.Queue.StrictPriority
+		if cfg.Queue.MaxRetry > 0 {
+			legacy.MaxRetry = cfg.Queue.MaxRetry
+		}
+		if rc.Timeout > 0 {
+			legacy.Timeout = rc.Timeout
+		}
+		if cfg.Queue.Retention > 0 {
+			legacy.Retention = time.Duration(cfg.Queue.Retention) * time.Second
+		}
+		if cfg.Queue.MaxQueueSize > 0 {
+			legacy.MaxQueueSize = cfg.Queue.MaxQueueSize
+		}
+		legacy.MaxPayloadBytes = rc.MaxPayloadBytes
+		rc.Legacy = legacy
+	} else if cfg.Queue.StrictPriority || cfg.Queue.Retention > 0 || cfg.Queue.MaxRetry > 0 || cfg.Queue.MaxQueueSize > 0 || cfg.Queue.EnableMonitor {
+		return RuntimeConfig{}, fmt.Errorf("%w: strict_priority、retention、max_retry、max_queue_size、enable_monitor 仅适用于 asynq", ErrUnsupportedCapability)
+	}
+	return rc, nil
+}
+
+type notification struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Payload []byte `json:"payload"`
+	Timeout int64  `json:"timeout_ns,omitempty"`
+}
+
+type nativeBackend interface {
+	Capabilities() Capabilities
+	Publish(context.Context, string, []byte) error
+	Consume(context.Context, string, func(context.Context, []byte) error) error
+	Overview(context.Context, []string) ([]QueueOverview, error)
+	Close() error
+}
+
+// Runtime owns exactly one queue backend and the handlers registered for it.
+// Legacy Asynq constructors remain available for applications using them.
+type Runtime struct {
+	cfg       RuntimeConfig
+	client    *Client
+	server    *Server
+	inspector TaskManagementAdapter
+	backend   nativeBackend
+	mu        sync.RWMutex
+	handlers  map[string]Handler
+	started   bool
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	stop      sync.Once
+}
+
+func OpenRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
+	cfg.Driver = canonicalDriver(cfg.Driver)
+	if cfg.Driver == "" {
+		cfg.Driver = "asynq"
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = "admin"
+	}
+	if len(cfg.Queues) == 0 {
+		cfg.Queues = map[string]int{"default": 10}
+	}
+	if cfg.Concurrency <= 0 {
+		cfg.Concurrency = 4
+	}
+	if cfg.MaxPayloadBytes <= 0 {
+		cfg.MaxPayloadBytes = 64 * 1024
+	}
+	r := &Runtime{cfg: cfg, handlers: make(map[string]Handler)}
+	if cfg.Driver == "asynq" {
+		if err := cfg.Legacy.Ping(ctx); err != nil {
+			return nil, err
+		}
+		return NewLegacyRuntime(cfg.Legacy), nil
+	}
+	var err error
+	switch cfg.Driver {
+	case "rabbitmq":
+		r.backend, err = openRabbitMQ(ctx, cfg)
+	case "nats":
+		r.backend, err = openNATS(ctx, cfg)
+	case "nsq":
+		r.backend, err = openNSQ(ctx, cfg)
+	case "kafka":
+		r.backend, err = openKafka(ctx, cfg)
+	case "amqp10":
+		r.backend, err = openAMQP10(ctx, cfg)
+	default:
+		err = fmt.Errorf("queue: 未知后端 %q", cfg.Driver)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func canonicalDriver(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "jetstream":
+		return "nats"
+	case "amqp1", "amqp1.0", "amqp-1.0":
+		return "amqp10"
+	default:
+		return strings.ToLower(strings.TrimSpace(name))
+	}
+}
+
+// NewLegacyRuntime wraps the existing Asynq constructors without checking the
+// connection. Callers that need startup validation should use OpenRuntime.
+func NewLegacyRuntime(cfg Config) *Runtime {
+	return &Runtime{
+		cfg: RuntimeConfig{Driver: "asynq", Legacy: cfg, Queues: cfg.queuePriorities(),
+			Concurrency: cfg.workerCount(), MaxPayloadBytes: cfg.maxPayloadBytes()},
+		client: NewClient(cfg), server: NewServer(cfg), inspector: &asynqManagementAdapter{NewInspector(cfg)},
+		handlers: make(map[string]Handler),
+	}
+}
+
+func (r *Runtime) Driver() string { return r.cfg.Driver }
+func (r *Runtime) Queues() []string {
+	names := make([]string, 0, len(r.cfg.Queues))
+	for name := range r.cfg.Queues {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+func (r *Runtime) LegacyConfig() (Config, bool) { return r.cfg.Legacy, r.cfg.Driver == "asynq" }
+func (r *Runtime) Capabilities() Capabilities {
+	if r.backend != nil {
+		c := r.backend.Capabilities()
+		c.Driver = r.cfg.Driver
+		return c
+	}
+	c := Capabilities{Driver: r.cfg.Driver}
+	if r.cfg.Driver == "asynq" {
+		c.TaskList, c.TaskGet, c.TaskStats = true, true, true
+		c.TaskRetry, c.TaskDelete, c.TaskCancel = true, true, true
+		c.Delay, c.Unique, c.MaxRetry, c.Retention, c.StrictPriority = true, true, true, true, true
+	}
+	return c
+}
+func (r *Runtime) Handle(name string, h Handler) {
+	if name == "" || h == nil {
+		return
+	}
+	r.mu.Lock()
+	r.handlers[name] = h
+	r.mu.Unlock()
+	if r.server != nil {
+		r.server.Handle(name, h)
+	}
+}
+func (r *Runtime) Has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.handlers[name]
+	return ok
+}
+func (r *Runtime) RegisteredTasks() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.handlers))
+	for name := range r.handlers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+func (r *Runtime) Start() error {
+	r.mu.Lock()
+	if r.started {
+		r.mu.Unlock()
+		return errors.New("queue: runtime 已启动")
+	}
+	r.started = true
+	r.mu.Unlock()
+	if r.server != nil {
+		return r.server.Start()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.cancel = cancel
+	for _, queue := range r.Queues() {
+		r.wg.Add(1)
+		go func(name string) {
+			defer r.wg.Done()
+			for ctx.Err() == nil {
+				_ = r.backend.Consume(ctx, name, r.execute)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+				}
+			}
+		}(queue)
+	}
+	return nil
+}
+func (r *Runtime) execute(ctx context.Context, body []byte) error {
+	var n notification
+	if err := json.Unmarshal(body, &n); err != nil {
+		return err
+	}
+	if n.ID == "" || n.Name == "" || len(n.Payload) > r.cfg.MaxPayloadBytes {
+		return errors.New("queue: 非法通知")
+	}
+	r.mu.RLock()
+	h := r.handlers[n.Name]
+	r.mu.RUnlock()
+	if h == nil {
+		return ErrUnknownTask
+	}
+	ctx = context.WithValue(ctx, runtimeTaskIDKey{}, n.ID)
+	ctx = context.WithValue(ctx, runtimeAttemptKey{}, 0)
+	if n.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(n.Timeout))
+		defer cancel()
+	}
+	return h(ctx, &Task{Name: n.Name, Payload: n.Payload})
+}
+func (r *Runtime) Enqueue(ctx context.Context, name string, payload []byte, opts ...EnqueueOption) (string, error) {
+	if r.client != nil {
+		return r.client.Enqueue(ctx, name, payload, opts...)
+	}
+	if len(payload) > r.cfg.MaxPayloadBytes {
+		return "", ErrPayloadTooLarge
+	}
+	o := &enqueueOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(o)
+		}
+	}
+	if o.processIn != 0 || o.maxRetry != nil || o.retention != 0 || o.uniqueTTL != 0 || o.taskID != "" {
+		return "", ErrUnsupportedCapability
+	}
+	queue := o.queue
+	if queue == "" {
+		queue = r.Queues()[0]
+	}
+	if _, ok := r.cfg.Queues[queue]; !ok {
+		return "", ErrQueueNotFound
+	}
+	timeout := o.timeout
+	if timeout == 0 {
+		timeout = r.cfg.Timeout
+	}
+	id := uuid.NewString()
+	body, err := json.Marshal(notification{ID: id, Name: name, Payload: payload, Timeout: int64(timeout)})
+	if err != nil {
+		return "", err
+	}
+	if err := r.backend.Publish(ctx, queue, body); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+func (r *Runtime) Overview(ctx context.Context) ([]QueueOverview, error) {
+	if r.backend != nil {
+		return r.backend.Overview(ctx, r.Queues())
+	}
+	out := make([]QueueOverview, 0, len(r.cfg.Queues))
+	for _, name := range r.Queues() {
+		info, err := r.inspector.QueueStats(name)
+		if err != nil {
+			out = append(out, QueueOverview{Queue: name, Source: "asynq", Error: err.Error()})
+			continue
+		}
+		ready, active := int64(info.Pending), int64(info.Active)
+		out = append(out, QueueOverview{Queue: name, Source: "asynq", Ready: &ready, Active: &active, Healthy: true})
+	}
+	return out, nil
+}
+func (r *Runtime) ListTasks(state, queue string, page, pageSize int) ([]TaskInfo, int, error) {
+	if r.inspector == nil {
+		return nil, 0, ErrUnsupportedCapability
+	}
+	return r.inspector.ListTasks(state, queue, page, pageSize)
+}
+func (r *Runtime) GetTask(queue, id string) (TaskInfo, error) {
+	if r.inspector == nil {
+		return TaskInfo{}, ErrUnsupportedCapability
+	}
+	return r.inspector.GetTask(queue, id)
+}
+func (r *Runtime) Retry(queue, id string) error {
+	if r.inspector == nil {
+		return ErrUnsupportedCapability
+	}
+	return r.inspector.Retry(queue, id)
+}
+func (r *Runtime) Delete(queue, id string) error {
+	if r.inspector == nil {
+		return ErrUnsupportedCapability
+	}
+	return r.inspector.Delete(queue, id)
+}
+func (r *Runtime) Cancel(id string) error {
+	if r.inspector == nil {
+		return ErrUnsupportedCapability
+	}
+	return r.inspector.Cancel(id)
+}
+func (r *Runtime) AllQueueStats(ctx context.Context) ([]QueueStats, error) {
+	if r.inspector == nil {
+		return nil, ErrUnsupportedCapability
+	}
+	return r.inspector.AllQueueStats(ctx)
+}
+func (r *Runtime) PauseQueue(ctx context.Context, queue string, pause bool) error {
+	if !r.Capabilities().QueuePause {
+		return ErrUnsupportedCapability
+	}
+	p, ok := r.backend.(interface {
+		Pause(context.Context, string, bool) error
+	})
+	if !ok {
+		return ErrUnsupportedCapability
+	}
+	if _, exists := r.cfg.Queues[queue]; !exists {
+		return ErrQueueNotFound
+	}
+	return p.Pause(ctx, queue, pause)
+}
+func (r *Runtime) GetRawMessage(ctx context.Context, queue string, sequence uint64) (RawMessage, error) {
+	if !r.Capabilities().RawMessageGet {
+		return RawMessage{}, ErrUnsupportedCapability
+	}
+	g, ok := r.backend.(interface {
+		GetRaw(context.Context, string, uint64) (RawMessage, error)
+	})
+	if !ok {
+		return RawMessage{}, ErrUnsupportedCapability
+	}
+	if _, exists := r.cfg.Queues[queue]; !exists {
+		return RawMessage{}, ErrQueueNotFound
+	}
+	return g.GetRaw(ctx, queue, sequence)
+}
+func (r *Runtime) Shutdown(ctx context.Context) {
+	r.stop.Do(func() {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		if r.server != nil {
+			done := make(chan struct{})
+			go func() { r.server.Shutdown(); close(done) }()
+			select {
+			case <-done:
+			case <-ctx.Done():
+			}
+		}
+		done := make(chan struct{})
+		go func() { r.wg.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
+		if r.backend != nil {
+			_ = r.backend.Close()
+		}
+		if r.client != nil {
+			_ = r.client.Close()
+		}
+		if r.inspector != nil {
+			_ = r.inspector.Close()
+		}
+	})
+}

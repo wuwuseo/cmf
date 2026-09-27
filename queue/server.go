@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/hibiken/asynq"
 	"github.com/wuwuseo/cmf/log"
@@ -36,6 +37,9 @@ func NewServer(cfg Config) *Server {
 				zap.Error(err),
 			)
 		}),
+	}
+	if cfg.RetryDelay > 0 {
+		asynqCfg.RetryDelayFunc = func(int, error, *asynq.Task) time.Duration { return cfg.RetryDelay }
 	}
 	return &Server{
 		srv:             asynq.NewServer(cfg.connOpt(), asynqCfg),

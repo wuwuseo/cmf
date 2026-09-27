@@ -139,6 +139,7 @@ func newTestConfig() queue.Config {
 	cfg.Queues = map[string]int{"default": 10, "low": 5}
 	cfg.MaxRetry = 1
 	cfg.TaskCheckInterval = 100 * time.Millisecond
+	cfg.RetryDelay = 100 * time.Millisecond
 	return cfg
 }
 
@@ -262,7 +263,7 @@ func TestRetryAndArchive(t *testing.T) {
 	}
 	defer server.Shutdown()
 
-	id, err := client.Enqueue(ctx, "test:flaky", nil)
+	id, err := client.Enqueue(ctx, "test:flaky", nil, queue.WithRetention(time.Minute))
 	if err != nil {
 		t.Fatalf("入队失败: %v", err)
 	}

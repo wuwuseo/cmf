@@ -19,7 +19,7 @@ type Task struct {
 }
 
 // Handler 队列任务处理器函数签名。
-// 返回非 nil 错误表示执行失败：任务将按指数退避自动重试，超过 MaxRetry 后进入 archived（死信）。
+// 返回非 nil 错误表示执行失败：任务默认按指数退避自动重试，超过 MaxRetry 后进入 archived（死信）。
 type Handler func(ctx context.Context, t *Task) error
 
 // Config 任务队列配置：Redis 连接参数 + 运行参数。
@@ -44,6 +44,7 @@ type Config struct {
 	// 空闲轮询间隔（所有队列无任务时检查新任务的周期），0 表示 asynq 默认 1 秒。
 	// 仅影响低负载下的响应延迟，通常无需调整；测试可调小以加速断言。
 	TaskCheckInterval time.Duration
+	RetryDelay        time.Duration // 固定重试间隔；0 使用 asynq 默认指数退避，主要供测试或特殊任务环境使用
 }
 
 // DefaultConfig 返回默认配置：本机 Redis、4 个 worker、单 default 队列、最多重试 3 次。
@@ -145,12 +146,18 @@ func parseState(s string) (asynq.TaskState, bool) {
 
 // GetTaskID 从处理器上下文中取当前任务 ID；不在队列执行环境中时返回空串。
 func GetTaskID(ctx context.Context) string {
+	if id, ok := ctx.Value(runtimeTaskIDKey{}).(string); ok {
+		return id
+	}
 	id, _ := asynq.GetTaskID(ctx)
 	return id
 }
 
 // GetAttempt 从处理器上下文中取当前为第几次尝试（首次执行为 0）。
 func GetAttempt(ctx context.Context) int {
+	if n, ok := ctx.Value(runtimeAttemptKey{}).(int); ok {
+		return n
+	}
 	n, _ := asynq.GetRetryCount(ctx)
 	return n
 }
