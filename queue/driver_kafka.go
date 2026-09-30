@@ -2,9 +2,11 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -17,7 +19,7 @@ type kafkaBackend struct {
 	producer *kgo.Client
 }
 
-func (*kafkaBackend) Capabilities() Capabilities { return Capabilities{} }
+func (*kafkaBackend) Capabilities() Capabilities { return Capabilities{MaxRetry: true, Delay: true} }
 
 func openKafka(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 	if len(cfg.KafkaBrokers) == 0 {
@@ -40,21 +42,52 @@ func openKafka(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 		replicas = 1
 	}
 	admin := kadm.NewClient(client)
-	for queue := range cfg.Queues {
-		topic := cfg.Namespace + "." + queue
-		created, err := admin.CreateTopics(ctx, partitions, replicas, nil, topic)
+	stateTopic := cfg.Namespace + ".task-state"
+	stateCreated, err := admin.CreateTopics(ctx, 1, replicas, map[string]*string{
+		"cleanup.policy": kadm.StringPtr("delete"), "retention.ms": kadm.StringPtr("-1"),
+		"retention.bytes": kadm.StringPtr("-1"),
+	}, stateTopic)
+	if err != nil {
+		client.Close()
+		return nil, err
+	}
+	if err := stateCreated[stateTopic].Err; err != nil && !errors.Is(err, kerr.TopicAlreadyExists) {
+		client.Close()
+		return nil, fmt.Errorf("queue: Kafka topic %s: %w", stateTopic, err)
+	}
+	if errors.Is(stateCreated[stateTopic].Err, kerr.TopicAlreadyExists) {
+		changes, err := admin.AlterTopicConfigs(ctx, []kadm.AlterConfig{
+			{Op: kadm.SetConfig, Name: "cleanup.policy", Value: kadm.StringPtr("delete")},
+			{Op: kadm.SetConfig, Name: "retention.ms", Value: kadm.StringPtr("-1")},
+			{Op: kadm.SetConfig, Name: "retention.bytes", Value: kadm.StringPtr("-1")},
+		}, stateTopic)
 		if err != nil {
 			client.Close()
-			return nil, err
+			return nil, fmt.Errorf("queue: Kafka 任务状态 topic 必须永久保留事件: %w", err)
 		}
-		if err := created[topic].Err; err != nil && !errors.Is(err, kerr.TopicAlreadyExists) {
+		if len(changes) != 1 || changes[0].Err != nil {
 			client.Close()
-			return nil, fmt.Errorf("queue: Kafka topic %s: %w", topic, err)
+			return nil, fmt.Errorf("queue: Kafka 任务状态 topic 必须永久保留事件: %+v", changes)
+		}
+	}
+	for queue := range cfg.Queues {
+		for _, topic := range []string{cfg.Namespace + "." + queue, cfg.Namespace + "." + queue + ".dead"} {
+			created, err := admin.CreateTopics(ctx, partitions, replicas, nil, topic)
+			if err != nil {
+				client.Close()
+				return nil, err
+			}
+			if err := created[topic].Err; err != nil && !errors.Is(err, kerr.TopicAlreadyExists) {
+				client.Close()
+				return nil, fmt.Errorf("queue: Kafka topic %s: %w", topic, err)
+			}
 		}
 	}
 	return &kafkaBackend{cfg: cfg, producer: client}, nil
 }
-func (b *kafkaBackend) topic(queue string) string { return b.cfg.Namespace + "." + queue }
+func (b *kafkaBackend) topic(queue string) string     { return b.cfg.Namespace + "." + queue }
+func (b *kafkaBackend) deadTopic(queue string) string { return b.topic(queue) + ".dead" }
+func (b *kafkaBackend) stateTopic() string            { return b.cfg.Namespace + ".task-state" }
 func (b *kafkaBackend) group(queue string) string {
 	base := b.cfg.KafkaGroup
 	if base == "" {
@@ -86,15 +119,42 @@ func (b *kafkaBackend) Consume(ctx context.Context, queue string, process func(c
 		iter := fetches.RecordIter()
 		for !iter.Done() {
 			record := iter.Next()
-			// A poison record blocks only its partition. Never commit past a failed task.
+			// The replacement is confirmed before the original offset is committed.
+			// A crash between those steps can duplicate the task (at-least-once delivery).
 			for ctx.Err() == nil {
-				if err := process(ctx, record.Value); err != nil {
+				attempt := kafkaAttempt(record.Headers)
+				err := process(context.WithValue(ctx, runtimeAttemptKey{}, attempt), record.Value)
+				if errors.Is(err, errNativeTaskBusy) {
 					select {
 					case <-ctx.Done():
-						break
 					case <-time.After(time.Second):
 					}
 					continue
+				}
+				if ctx.Err() != nil {
+					break
+				}
+				if err != nil {
+					task, _ := nativeNotification(record.Value, b.cfg.MaxRetry)
+					destination := b.deadTopic(queue)
+					headers := []kgo.RecordHeader{{Key: "x-cmf-attempt", Value: []byte(strconv.Itoa(attempt))}}
+					if attempt < nativeRetryLimit(task.MaxRetry) {
+						destination = b.topic(queue)
+						headers[0].Value = []byte(strconv.Itoa(attempt + 1))
+					}
+					for ctx.Err() == nil {
+						out := &kgo.Record{Topic: destination, Key: record.Key, Value: record.Value, Headers: headers}
+						if pubErr := b.producer.ProduceSync(ctx, out).FirstErr(); pubErr == nil {
+							break
+						}
+						select {
+						case <-ctx.Done():
+						case <-time.After(time.Second):
+						}
+					}
+					if ctx.Err() != nil {
+						break
+					}
 				}
 				for ctx.Err() == nil {
 					if err := client.CommitRecords(ctx, record); err == nil {
@@ -112,6 +172,18 @@ func (b *kafkaBackend) Consume(ctx context.Context, queue string, process func(c
 		client.AllowRebalance()
 	}
 	return ctx.Err()
+}
+func kafkaAttempt(headers []kgo.RecordHeader) int {
+	for _, h := range headers {
+		if h.Key != "x-cmf-attempt" {
+			continue
+		}
+		n, err := strconv.Atoi(string(h.Value))
+		if err == nil && n >= 0 {
+			return n
+		}
+	}
+	return 0
 }
 func (b *kafkaBackend) Overview(ctx context.Context, queues []string) ([]QueueOverview, error) {
 	admin := kadm.NewClient(b.producer)
@@ -181,3 +253,69 @@ func (b *kafkaBackend) Overview(ctx context.Context, queues []string) ([]QueueOv
 	return out, nil
 }
 func (b *kafkaBackend) Close() error { b.producer.Close(); return nil }
+func (b *kafkaBackend) AppendTaskEvent(ctx context.Context, data []byte) error {
+	return b.producer.ProduceSync(ctx, &kgo.Record{Topic: b.stateTopic(), Value: data}).FirstErr()
+}
+func (b *kafkaBackend) TailTaskOffset(ctx context.Context) (uint64, error) {
+	offsets, err := kadm.NewClient(b.producer).ListEndOffsets(ctx, b.stateTopic())
+	if err != nil {
+		return 0, err
+	}
+	if err := offsets.Error(); err != nil {
+		return 0, err
+	}
+	partition, ok := offsets[b.stateTopic()][0]
+	if !ok || partition.Offset < 0 {
+		return 0, errors.New("queue: Kafka 任务状态 topic 缺少分区 0")
+	}
+	return uint64(partition.Offset), nil
+}
+func (b *kafkaBackend) ReplayTaskEvents(ctx context.Context, from, stop uint64, marker string, visit func([]byte) error) (uint64, error) {
+	if from == 0 {
+		starts, err := kadm.NewClient(b.producer).ListStartOffsets(ctx, b.stateTopic())
+		if err != nil {
+			return 0, err
+		}
+		if err := starts.Error(); err != nil {
+			return 0, err
+		}
+		if start, ok := starts[b.stateTopic()][0]; !ok || start.Offset != 0 {
+			return 0, errors.New("queue: Kafka 任务状态日志起始 offset 不为 0")
+		}
+	}
+	client, err := kgo.NewClient(
+		kgo.SeedBrokers(b.cfg.KafkaBrokers...),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{b.stateTopic(): {0: kgo.NewOffset().At(int64(from))}}),
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer client.Close()
+	for ctx.Err() == nil {
+		fetches := client.PollRecords(ctx, 100)
+		if errs := fetches.Errors(); len(errs) > 0 {
+			return 0, fmt.Errorf("queue: Kafka 任务状态日志读取失败: %w", errs[0].Err)
+		}
+		iter := fetches.RecordIter()
+		for !iter.Done() {
+			record := iter.Next()
+			if marker == "" && uint64(record.Offset) >= stop {
+				return stop, nil
+			}
+			if err := visit(record.Value); err != nil {
+				return 0, err
+			}
+			var event nativeTaskEvent
+			if err := json.Unmarshal(record.Value, &event); err != nil {
+				return 0, err
+			}
+			if event.EventID == marker {
+				return uint64(record.Offset) + 1, nil
+			}
+			if marker == "" && uint64(record.Offset)+1 >= stop {
+				return stop, nil
+			}
+		}
+	}
+	return 0, ctx.Err()
+}

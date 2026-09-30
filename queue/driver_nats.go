@@ -2,7 +2,9 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -12,13 +14,16 @@ import (
 )
 
 type natsBackend struct {
-	cfg    RuntimeConfig
-	conn   *nats.Conn
-	js     jetstream.JetStream
-	stream jetstream.Stream
+	cfg         RuntimeConfig
+	conn        *nats.Conn
+	js          jetstream.JetStream
+	stream      jetstream.Stream
+	stateStream jetstream.Stream
 }
 
-func (*natsBackend) Capabilities() Capabilities { return Capabilities{RawMessageGet: true} }
+func (*natsBackend) Capabilities() Capabilities {
+	return Capabilities{RawMessageGet: true, MaxRetry: true, Delay: true}
+}
 
 func openNATS(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 	if cfg.NATSURL == "" {
@@ -35,7 +40,7 @@ func openNATS(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 	}
 	b := &natsBackend{cfg: cfg, conn: conn, js: js}
 	stream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name: b.streamName(), Subjects: []string{cfg.Namespace + ".queue.*"},
+		Name: b.streamName(), Subjects: []string{cfg.Namespace + ".queue.*", cfg.Namespace + ".dead.*"},
 		Storage: jetstream.FileStorage, Retention: jetstream.WorkQueuePolicy,
 		Discard: jetstream.DiscardNew,
 	})
@@ -44,6 +49,16 @@ func openNATS(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 		return nil, err
 	}
 	b.stream = stream
+	stateStream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+		Name: b.stateStreamName(), Subjects: []string{b.stateSubject()},
+		Storage: jetstream.FileStorage, Retention: jetstream.LimitsPolicy,
+		Discard: jetstream.DiscardNew,
+	})
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	b.stateStream = stateStream
 	for queue := range cfg.Queues {
 		if _, err := b.consumer(ctx, queue); err != nil {
 			conn.Close()
@@ -52,8 +67,13 @@ func openNATS(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 	}
 	return b, nil
 }
-func (b *natsBackend) streamName() string               { return strings.ToUpper(b.cfg.Namespace) + "_TASKS" }
+func (b *natsBackend) streamName() string { return strings.ToUpper(b.cfg.Namespace) + "_TASKS" }
+func (b *natsBackend) stateStreamName() string {
+	return strings.ToUpper(b.cfg.Namespace) + "_TASK_STATE"
+}
+func (b *natsBackend) stateSubject() string             { return b.cfg.Namespace + ".task.state" }
 func (b *natsBackend) subject(queue string) string      { return b.cfg.Namespace + ".queue." + queue }
+func (b *natsBackend) deadSubject(queue string) string  { return b.cfg.Namespace + ".dead." + queue }
 func (b *natsBackend) consumerName(queue string) string { return b.cfg.Namespace + "_" + queue }
 func (b *natsBackend) consumer(ctx context.Context, queue string) (jetstream.Consumer, error) {
 	return b.js.CreateOrUpdateConsumer(ctx, b.streamName(), jetstream.ConsumerConfig{
@@ -63,7 +83,9 @@ func (b *natsBackend) consumer(ctx context.Context, queue string) (jetstream.Con
 	})
 }
 func (b *natsBackend) Publish(ctx context.Context, queue string, body []byte) error {
-	_, err := b.js.Publish(ctx, b.subject(queue), body)
+	headers := nats.Header{}
+	headers.Set("X-CMF-Attempt", "0")
+	_, err := b.js.PublishMsg(ctx, &nats.Msg{Subject: b.subject(queue), Data: body, Header: headers})
 	return err
 }
 func (b *natsBackend) Consume(ctx context.Context, queue string, process func(context.Context, []byte) error) error {
@@ -117,16 +139,61 @@ func (b *natsBackend) processMessage(ctx context.Context, msg jetstream.Msg, pro
 			}
 		}
 	}()
-	err := process(ctx, msg.Data())
+	meta, metaErr := msg.Metadata()
+	if metaErr != nil || meta == nil || meta.NumDelivered == 0 {
+		close(stop)
+		<-stopped
+		_ = msg.NakWithDelay(time.Second)
+		return
+	}
+	attempt := int(meta.NumDelivered - 1)
+	if raw := msg.Headers().Get("X-CMF-Attempt"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 {
+			attempt = parsed
+		}
+	}
+	err := process(context.WithValue(ctx, runtimeAttemptKey{}, attempt), msg.Data())
 	close(stop)
 	<-stopped
+	if errors.Is(err, errNativeTaskBusy) {
+		_ = msg.NakWithDelay(time.Second)
+		return
+	}
 	if ctx.Err() != nil {
 		return
 	}
+	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if err != nil {
-		_ = msg.NakWithDelay(time.Second)
+		task, _ := nativeNotification(msg.Data(), b.cfg.MaxRetry)
+		if attempt < nativeRetryLimit(task.MaxRetry) {
+			headers := nats.Header{}
+			headers.Set("X-CMF-Attempt", strconv.Itoa(attempt+1))
+			queue := strings.TrimPrefix(msg.Subject(), b.cfg.Namespace+".queue.")
+			_, pubErr := b.js.PublishMsg(ctx, &nats.Msg{Subject: b.subject(queue), Data: msg.Data(), Header: headers})
+			if pubErr != nil {
+				_ = msg.NakWithDelay(time.Second)
+				return
+			}
+			_ = msg.DoubleAck(ackCtx)
+			return
+		}
+		headers := nats.Header{}
+		headers.Set("X-CMF-Attempt", strconv.Itoa(attempt))
+		lastError := err.Error()
+		if len(lastError) > 1024 {
+			lastError = lastError[:1024]
+		}
+		headers.Set("X-CMF-Last-Error", lastError)
+		queue := strings.TrimPrefix(msg.Subject(), b.cfg.Namespace+".queue.")
+		_, pubErr := b.js.PublishMsg(ctx, &nats.Msg{Subject: b.deadSubject(queue), Data: msg.Data(), Header: headers})
+		if pubErr != nil {
+			_ = msg.NakWithDelay(time.Second)
+			return
+		}
+		_ = msg.DoubleAck(ackCtx)
 	} else {
-		_ = msg.Ack()
+		_ = msg.DoubleAck(ackCtx)
 	}
 }
 func (b *natsBackend) Overview(ctx context.Context, queues []string) ([]QueueOverview, error) {
@@ -159,6 +226,65 @@ func (b *natsBackend) GetRaw(ctx context.Context, queue string, sequence uint64)
 		return RawMessage{}, ErrMessageNotRetained
 	}
 	return RawMessage{Queue: queue, Sequence: msg.Sequence, Payload: msg.Data}, nil
+}
+func (b *natsBackend) AppendTaskEvent(ctx context.Context, data []byte) error {
+	_, err := b.js.Publish(ctx, b.stateSubject(), data)
+	return err
+}
+func (b *natsBackend) TailTaskOffset(ctx context.Context) (uint64, error) {
+	info, err := b.stateStream.Info(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if info.State.Msgs == 0 {
+		if info.State.LastSeq != 0 {
+			return 0, errors.New("queue: JetStream 任务状态日志已丢失")
+		}
+		return 0, nil
+	}
+	return info.State.LastSeq + 1, nil
+}
+func (b *natsBackend) ReplayTaskEvents(ctx context.Context, from, stop uint64, marker string, visit func([]byte) error) (uint64, error) {
+	info, err := b.stateStream.Info(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if from == 0 {
+		if info.State.FirstSeq != 1 {
+			return 0, errors.New("queue: JetStream 任务状态日志起始序号不为 1")
+		}
+		from = info.State.FirstSeq
+	}
+	if from < info.State.FirstSeq {
+		return 0, errors.New("queue: JetStream 任务状态日志存在缺口")
+	}
+	end := info.State.LastSeq + 1
+	if marker == "" {
+		end = stop
+	}
+	for seq := from; seq < end; seq++ {
+		msg, err := b.stateStream.GetMsg(ctx, seq)
+		if errors.Is(err, jetstream.ErrMsgNotFound) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		if err := visit(msg.Data); err != nil {
+			return 0, err
+		}
+		var event nativeTaskEvent
+		if err := json.Unmarshal(msg.Data, &event); err != nil {
+			return 0, err
+		}
+		if event.EventID == marker {
+			return seq + 1, nil
+		}
+	}
+	if marker == "" {
+		return end, nil
+	}
+	return 0, errors.New("queue: JetStream 任务状态日志缺少确认事件")
 }
 func (b *natsBackend) Close() error {
 	if b.conn == nil {

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,19 @@ import (
 
 type runtimeTaskIDKey struct{}
 type runtimeAttemptKey struct{}
+type runtimeQueueKey struct{}
+
+const maxNativeRetry = 100
+
+func nativeRetryLimit(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > maxNativeRetry {
+		return maxNativeRetry
+	}
+	return n
+}
 
 // Capabilities describes the operations which have their documented semantics
 // on the selected broker. Unsupported actions must never be silently ignored.
@@ -80,6 +94,7 @@ type RuntimeConfig struct {
 	Legacy                                                                            Config
 	Queues                                                                            map[string]int
 	Concurrency, MaxPayloadBytes                                                      int
+	MaxRetry                                                                          int
 	Timeout                                                                           time.Duration
 	RabbitMQURL, RabbitMQManagementURL, NATSURL, NSQD, NSQLookupd, NSQHTTP, AMQP10URL string
 	KafkaBrokers                                                                      []string
@@ -95,7 +110,7 @@ func RuntimeConfigFromApp(cfg *config.Config) (RuntimeConfig, error) {
 	}
 	rc := RuntimeConfig{
 		Driver: driver, Namespace: cfg.Queue.Namespace, Queues: cfg.Queue.Queues,
-		Concurrency: cfg.Queue.Concurrency, MaxPayloadBytes: cfg.Queue.MaxPayloadBytes,
+		Concurrency: cfg.Queue.Concurrency, MaxPayloadBytes: cfg.Queue.MaxPayloadBytes, MaxRetry: cfg.Queue.MaxRetry,
 		Timeout:     time.Duration(cfg.Queue.Timeout) * time.Second,
 		RabbitMQURL: cfg.Queue.RabbitMQ.URL, RabbitMQManagementURL: cfg.Queue.RabbitMQ.ManagementURL, NATSURL: cfg.Queue.NATS.URL,
 		NSQD: cfg.Queue.NSQ.NSQD, NSQLookupd: cfg.Queue.NSQ.Lookupd, NSQHTTP: cfg.Queue.NSQ.HTTP,
@@ -114,6 +129,9 @@ func RuntimeConfigFromApp(cfg *config.Config) (RuntimeConfig, error) {
 	}
 	if rc.MaxPayloadBytes <= 0 {
 		rc.MaxPayloadBytes = 64 * 1024
+	}
+	if rc.MaxRetry < 0 || (driver != "asynq" && rc.MaxRetry > maxNativeRetry) {
+		return RuntimeConfig{}, fmt.Errorf("queue: max_retry 必须在 0 到 %d 之间", maxNativeRetry)
 	}
 	if driver == "asynq" {
 		legacy, err := NewConfigFromApp(cfg, cfg.Queue.RedisConnection)
@@ -137,17 +155,35 @@ func RuntimeConfigFromApp(cfg *config.Config) (RuntimeConfig, error) {
 		}
 		legacy.MaxPayloadBytes = rc.MaxPayloadBytes
 		rc.Legacy = legacy
-	} else if cfg.Queue.StrictPriority || cfg.Queue.Retention > 0 || cfg.Queue.MaxRetry > 0 || cfg.Queue.MaxQueueSize > 0 || cfg.Queue.EnableMonitor {
-		return RuntimeConfig{}, fmt.Errorf("%w: strict_priority、retention、max_retry、max_queue_size、enable_monitor 仅适用于 asynq", ErrUnsupportedCapability)
+	} else if cfg.Queue.StrictPriority || cfg.Queue.Retention > 0 || (driver == "amqp10" && cfg.Queue.MaxRetry > 0) || cfg.Queue.MaxQueueSize > 0 || cfg.Queue.EnableMonitor {
+		return RuntimeConfig{}, fmt.Errorf("%w: strict_priority、retention、max_queue_size、enable_monitor 仅适用于 asynq；amqp10 不支持 max_retry", ErrUnsupportedCapability)
 	}
 	return rc, nil
 }
 
 type notification struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Payload []byte `json:"payload"`
-	Timeout int64  `json:"timeout_ns,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Payload  []byte `json:"payload"`
+	Timeout  int64  `json:"timeout_ns,omitempty"`
+	MaxRetry int    `json:"max_retry"`
+}
+
+func nativeNotification(body []byte, defaultRetry int) (notification, error) {
+	var n notification
+	if err := json.Unmarshal(body, &n); err != nil {
+		return notification{}, err
+	}
+	var retryField struct {
+		MaxRetry *int `json:"max_retry"`
+	}
+	if err := json.Unmarshal(body, &retryField); err != nil {
+		return notification{}, err
+	}
+	if retryField.MaxRetry == nil {
+		n.MaxRetry = defaultRetry
+	}
+	return n, nil
 }
 
 type nativeBackend interface {
@@ -216,6 +252,9 @@ func OpenRuntime(ctx context.Context, cfg RuntimeConfig) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	if journal, ok := r.backend.(nativeTaskJournal); ok {
+		r.inspector = &nativeTaskManagement{journal: journal, queues: cfg.Queues, publish: r.backend.Publish}
+	}
 	return r, nil
 }
 
@@ -255,6 +294,10 @@ func (r *Runtime) Capabilities() Capabilities {
 	if r.backend != nil {
 		c := r.backend.Capabilities()
 		c.Driver = r.cfg.Driver
+		if r.inspector != nil {
+			c.TaskList, c.TaskGet, c.TaskStats = true, true, true
+			c.TaskRetry, c.TaskDelete, c.TaskCancel = true, true, true
+		}
 		return c
 	}
 	c := Capabilities{Driver: r.cfg.Driver}
@@ -305,12 +348,32 @@ func (r *Runtime) Start() error {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
+	if management, ok := r.inspector.(*nativeTaskManagement); ok {
+		r.wg.Add(1)
+		go func() {
+			defer r.wg.Done()
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			for ctx.Err() == nil {
+				recoveryCtx, done := context.WithTimeout(ctx, 20*time.Second)
+				_ = management.Recover(recoveryCtx)
+				done()
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	for _, queue := range r.Queues() {
 		r.wg.Add(1)
 		go func(name string) {
 			defer r.wg.Done()
 			for ctx.Err() == nil {
-				_ = r.backend.Consume(ctx, name, r.execute)
+				_ = r.backend.Consume(ctx, name, func(taskCtx context.Context, body []byte) error {
+					return r.execute(context.WithValue(taskCtx, runtimeQueueKey{}, name), body)
+				})
 				select {
 				case <-ctx.Done():
 					return
@@ -322,27 +385,112 @@ func (r *Runtime) Start() error {
 	return nil
 }
 func (r *Runtime) execute(ctx context.Context, body []byte) error {
-	var n notification
-	if err := json.Unmarshal(body, &n); err != nil {
+	n, err := nativeNotification(body, r.cfg.MaxRetry)
+	if err != nil {
 		return err
 	}
 	if n.ID == "" || n.Name == "" || len(n.Payload) > r.cfg.MaxPayloadBytes {
 		return errors.New("queue: 非法通知")
 	}
+	queue, _ := ctx.Value(runtimeQueueKey{}).(string)
+	var token string
+	management, managed := r.inspector.(*nativeTaskManagement)
+	if managed {
+		attempt, _ := ctx.Value(runtimeAttemptKey{}).(int)
+		var accepted bool
+		var err error
+		token, accepted, err = management.Claim(ctx, queue, n, attempt)
+		if err != nil {
+			return err
+		}
+		if !accepted {
+			return nil // deleted, completed, or a duplicate broker delivery
+		}
+	}
 	r.mu.RLock()
 	h := r.handlers[n.Name]
 	r.mu.RUnlock()
+	var handlerErr error
 	if h == nil {
-		return ErrUnknownTask
+		handlerErr = ErrUnknownTask
 	}
 	ctx = context.WithValue(ctx, runtimeTaskIDKey{}, n.ID)
-	ctx = context.WithValue(ctx, runtimeAttemptKey{}, 0)
+	if _, ok := ctx.Value(runtimeAttemptKey{}).(int); !ok {
+		ctx = context.WithValue(ctx, runtimeAttemptKey{}, 0)
+	}
+	brokerCtx := ctx
 	if n.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(n.Timeout))
 		defer cancel()
 	}
-	return h(ctx, &Task{Name: n.Name, Payload: n.Payload})
+	var wasCanceled atomic.Bool
+	if managed {
+		var cancelTask context.CancelFunc
+		ctx, cancelTask = context.WithCancel(ctx)
+		defer cancelTask()
+		pollCtx, stopPoll := context.WithCancel(ctx)
+		pollDone := make(chan struct{})
+		go func() {
+			defer close(pollDone)
+			ticker := time.NewTicker(time.Second)
+			defer ticker.Stop()
+			heartbeatAt := time.Now()
+			for {
+				select {
+				case <-pollCtx.Done():
+					return
+				case <-ticker.C:
+					checkCtx, done := context.WithTimeout(pollCtx, 10*time.Second)
+					canceled, err := management.canceled(checkCtx, queue, n.ID, token)
+					done()
+					if err == nil && canceled {
+						wasCanceled.Store(true)
+						cancelTask()
+						return
+					}
+					if time.Since(heartbeatAt) >= 30*time.Second {
+						hbCtx, done := context.WithTimeout(pollCtx, 10*time.Second)
+						_ = management.Heartbeat(hbCtx, queue, n.ID, token)
+						done()
+						heartbeatAt = time.Now()
+					}
+				}
+			}
+		}()
+		defer func() { stopPoll(); <-pollDone }()
+	}
+	if handlerErr == nil {
+		handlerErr = h(ctx, &Task{Name: n.Name, Payload: n.Payload})
+	}
+	if handlerErr == nil && ctx.Err() != nil {
+		handlerErr = ctx.Err()
+	}
+	if !managed {
+		return handlerErr
+	}
+	if brokerCtx.Err() != nil {
+		return brokerCtx.Err()
+	}
+	checkCtx, checkDone := context.WithTimeout(context.Background(), 15*time.Second)
+	canceled, checkErr := management.canceled(checkCtx, queue, n.ID, token)
+	checkDone()
+	if checkErr != nil {
+		return checkErr
+	}
+	if canceled {
+		wasCanceled.Store(true)
+	}
+	if wasCanceled.Load() {
+		handlerErr = context.Canceled
+	}
+	finishCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
+	defer done()
+	attempt, _ := ctx.Value(runtimeAttemptKey{}).(int)
+	if err := management.Finish(finishCtx, queue, n.ID, token, attempt, handlerErr); err != nil {
+		return err
+	}
+	return handlerErr
 }
 func (r *Runtime) Enqueue(ctx context.Context, name string, payload []byte, opts ...EnqueueOption) (string, error) {
 	if r.client != nil {
@@ -357,12 +505,23 @@ func (r *Runtime) Enqueue(ctx context.Context, name string, payload []byte, opts
 			opt(o)
 		}
 	}
-	if o.processIn != 0 || o.maxRetry != nil || o.retention != 0 || o.uniqueTTL != 0 || o.taskID != "" {
+	if o.processIn < 0 || (o.processIn != 0 && r.cfg.Driver != "nsq" && !r.Capabilities().Delay) || (r.cfg.Driver == "amqp10" && o.maxRetry != nil) || o.retention != 0 || o.uniqueTTL != 0 || o.taskID != "" {
 		return "", ErrUnsupportedCapability
+	}
+	maxRetry := r.cfg.MaxRetry
+	if o.maxRetry != nil {
+		maxRetry = *o.maxRetry
+	}
+	if maxRetry < 0 || maxRetry > maxNativeRetry {
+		return "", fmt.Errorf("queue: max_retry 必须在 0 到 %d 之间", maxNativeRetry)
 	}
 	queue := o.queue
 	if queue == "" {
-		queue = r.Queues()[0]
+		if _, ok := r.cfg.Queues["default"]; ok {
+			queue = "default"
+		} else {
+			queue = r.Queues()[0]
+		}
 	}
 	if _, ok := r.cfg.Queues[queue]; !ok {
 		return "", ErrQueueNotFound
@@ -372,12 +531,46 @@ func (r *Runtime) Enqueue(ctx context.Context, name string, payload []byte, opts
 		timeout = r.cfg.Timeout
 	}
 	id := uuid.NewString()
-	body, err := json.Marshal(notification{ID: id, Name: name, Payload: payload, Timeout: int64(timeout)})
+	n := notification{ID: id, Name: name, Payload: payload, Timeout: int64(timeout), MaxRetry: maxRetry}
+	body, err := json.Marshal(n)
 	if err != nil {
 		return "", err
 	}
-	if err := r.backend.Publish(ctx, queue, body); err != nil {
-		return "", err
+	management, managed := r.inspector.(*nativeTaskManagement)
+	if managed {
+		var due time.Time
+		if o.processIn > 0 {
+			due = time.Now().Add(o.processIn)
+		}
+		if err := management.Create(ctx, queue, n, due); err != nil {
+			return "", err
+		}
+		if !due.IsZero() {
+			return id, nil
+		}
+	}
+	var publishErr error
+	if o.processIn > 0 {
+		deferred, ok := r.backend.(interface {
+			PublishDelayed(context.Context, string, []byte, time.Duration) error
+		})
+		if !ok {
+			return "", ErrUnsupportedCapability
+		}
+		publishErr = deferred.PublishDelayed(ctx, queue, body, o.processIn)
+	} else {
+		publishErr = r.backend.Publish(ctx, queue, body)
+	}
+	if publishErr != nil {
+		if managed {
+			_ = management.Delete(queue, id)
+		}
+		return "", publishErr
+	}
+	if managed {
+		// The broker has confirmed the delivery. A failed dispatch marker is
+		// recovered by the periodic replay and can only create a duplicate.
+		_ = management.MarkDispatched(ctx, queue, id)
 	}
 	return id, nil
 }

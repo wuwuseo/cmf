@@ -21,9 +21,9 @@ type rabbitBackend struct {
 	http *http.Client
 }
 
-func (*rabbitBackend) Capabilities() Capabilities { return Capabilities{} }
+func (*rabbitBackend) Capabilities() Capabilities { return Capabilities{MaxRetry: true, Delay: true} }
 
-func openRabbitMQ(_ context.Context, cfg RuntimeConfig) (nativeBackend, error) {
+func openRabbitMQ(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 	if cfg.RabbitMQURL == "" || cfg.RabbitMQManagementURL == "" {
 		return nil, errors.New("queue: rabbitmq.url 和 rabbitmq.management_url 必须配置")
 	}
@@ -36,6 +36,22 @@ func openRabbitMQ(_ context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 		return nil, err
 	}
 	b := &rabbitBackend{cfg: cfg, conn: conn, http: &http.Client{Timeout: 5 * time.Second}}
+	stateCh, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	_, err = stateCh.QueueDeclare(b.stateName(), true, false, false, false, amqp.Table{"x-queue-type": "stream"})
+	stateCh.Close()
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("queue: RabbitMQ 任务状态 stream 不可用: %w", err)
+	}
+	bootstrap, _ := json.Marshal(nativeTaskEvent{EventID: "bootstrap", Kind: "bootstrap", At: time.Now().UTC()})
+	if err := b.publish(ctx, b.stateName(), bootstrap, nil); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	for queue := range cfg.Queues {
 		ch, e := conn.Channel()
 		if e != nil {
@@ -43,6 +59,9 @@ func openRabbitMQ(_ context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 			return nil, e
 		}
 		_, e = ch.QueueDeclare(b.name(queue), true, false, false, false, nil)
+		if e == nil {
+			_, e = ch.QueueDeclare(b.deadName(queue), true, false, false, false, nil)
+		}
 		ch.Close()
 		if e != nil {
 			conn.Close()
@@ -52,7 +71,9 @@ func openRabbitMQ(_ context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 	return b, nil
 }
 
-func (b *rabbitBackend) name(queue string) string { return b.cfg.Namespace + "." + queue }
+func (b *rabbitBackend) name(queue string) string     { return b.cfg.Namespace + "." + queue }
+func (b *rabbitBackend) deadName(queue string) string { return b.name(queue) + ".dead" }
+func (b *rabbitBackend) stateName() string            { return b.cfg.Namespace + ".task-state" }
 func (b *rabbitBackend) connection() (*amqp.Connection, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -67,6 +88,9 @@ func (b *rabbitBackend) connection() (*amqp.Connection, error) {
 	return conn, nil
 }
 func (b *rabbitBackend) Publish(ctx context.Context, queue string, body []byte) error {
+	return b.publish(ctx, b.name(queue), body, nil)
+}
+func (b *rabbitBackend) publish(ctx context.Context, routingKey string, body []byte, headers amqp.Table) error {
 	conn, err := b.connection()
 	if err != nil {
 		return err
@@ -81,8 +105,8 @@ func (b *rabbitBackend) Publish(ctx context.Context, queue string, body []byte) 
 	}
 	confirms := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
 	returns := ch.NotifyReturn(make(chan amqp.Return, 1))
-	err = ch.PublishWithContext(ctx, "", b.name(queue), true, false, amqp.Publishing{
-		ContentType: "application/json", DeliveryMode: amqp.Persistent, Body: body,
+	err = ch.PublishWithContext(ctx, "", routingKey, true, false, amqp.Publishing{
+		ContentType: "application/json", DeliveryMode: amqp.Persistent, Body: body, Headers: headers,
 	})
 	if err != nil {
 		return err
@@ -142,18 +166,68 @@ func (b *rabbitBackend) Consume(ctx context.Context, queue string, process func(
 			go func(d amqp.Delivery) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				if err := process(ctx, d.Body); err != nil {
+				attempt := rabbitAttempt(d.Headers)
+				err := process(context.WithValue(ctx, runtimeAttemptKey{}, attempt), d.Body)
+				if errors.Is(err, errNativeTaskBusy) {
 					select {
 					case <-ctx.Done():
+						return
 					case <-time.After(time.Second):
 					}
 					_ = d.Nack(false, true)
-				} else {
-					_ = d.Ack(false)
+					return
 				}
+				if err == nil {
+					_ = d.Ack(false)
+					return
+				}
+				if ctx.Err() != nil {
+					return // closing the channel returns the unacked delivery to the queue
+				}
+				task, _ := nativeNotification(d.Body, b.cfg.MaxRetry)
+				routingKey := b.retryDestination(queue, attempt, nativeRetryLimit(task.MaxRetry))
+				lastError := err.Error()
+				if len(lastError) > 1024 {
+					lastError = lastError[:1024]
+				}
+				headers := amqp.Table{"x-cmf-attempt": int32(attempt), "x-cmf-last-error": lastError, "x-cmf-failed-at": time.Now().UTC().Format(time.RFC3339Nano)}
+				if routingKey == b.name(queue) {
+					headers = amqp.Table{"x-cmf-attempt": int32(attempt + 1)}
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(time.Second):
+					}
+				}
+				// Confirm the replacement before acknowledging the original. A crash
+				// between these steps can duplicate work, as with other at-least-once queues.
+				if pubErr := b.publish(ctx, routingKey, d.Body, headers); pubErr != nil {
+					_ = d.Nack(false, true)
+					return
+				}
+				_ = d.Ack(false)
 			}(d)
 		}
 	}
+}
+func (b *rabbitBackend) retryDestination(queue string, attempt, maxRetry int) string {
+	if attempt < maxRetry {
+		return b.name(queue)
+	}
+	return b.deadName(queue)
+}
+func rabbitAttempt(headers amqp.Table) int {
+	switch n := headers["x-cmf-attempt"].(type) {
+	case int32:
+		if n >= 0 {
+			return int(n)
+		}
+	case int64:
+		if n >= 0 && n <= 1<<31-1 {
+			return int(n)
+		}
+	}
+	return 0
 }
 func (b *rabbitBackend) Overview(ctx context.Context, queues []string) ([]QueueOverview, error) {
 	conn, err := b.connection()
@@ -234,4 +308,115 @@ func (b *rabbitBackend) Close() error {
 		return b.conn.Close()
 	}
 	return nil
+}
+func (b *rabbitBackend) AppendTaskEvent(ctx context.Context, data []byte) error {
+	return b.publish(ctx, b.stateName(), data, nil)
+}
+func rabbitStreamOffset(d amqp.Delivery) (uint64, error) {
+	switch n := d.Headers["x-stream-offset"].(type) {
+	case int64:
+		if n >= 0 {
+			return uint64(n), nil
+		}
+	case int32:
+		if n >= 0 {
+			return uint64(n), nil
+		}
+	}
+	return 0, fmt.Errorf("queue: RabbitMQ stream 缺少 offset: %T", d.Headers["x-stream-offset"])
+}
+func (b *rabbitBackend) TailTaskOffset(ctx context.Context) (uint64, error) {
+	conn, err := b.connection()
+	if err != nil {
+		return 0, err
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		return 0, err
+	}
+	defer ch.Close()
+	if err := ch.Qos(1, 0, false); err != nil {
+		return 0, err
+	}
+	deliveries, err := ch.Consume(b.stateName(), "", false, false, false, false, amqp.Table{"x-stream-offset": "last"})
+	if err != nil {
+		return 0, err
+	}
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case d, ok := <-deliveries:
+		if !ok {
+			return 0, errors.New("queue: RabbitMQ stream 末尾读取中断")
+		}
+		offset, err := rabbitStreamOffset(d)
+		if err != nil {
+			return 0, err
+		}
+		if err := d.Ack(false); err != nil {
+			return 0, err
+		}
+		return offset + 1, nil
+	}
+}
+func (b *rabbitBackend) ReplayTaskEvents(ctx context.Context, from, stop uint64, marker string, visit func([]byte) error) (uint64, error) {
+	conn, err := b.connection()
+	if err != nil {
+		return 0, err
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		return 0, err
+	}
+	defer ch.Close()
+	if err := ch.Qos(100, 0, false); err != nil {
+		return 0, err
+	}
+	offset := any("first")
+	if from > 0 {
+		offset = int64(from)
+	}
+	deliveries, err := ch.Consume(b.stateName(), "", false, false, false, false, amqp.Table{"x-stream-offset": offset})
+	if err != nil {
+		return 0, err
+	}
+	expected := from
+	for {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case d, ok := <-deliveries:
+			if !ok {
+				return 0, errors.New("queue: RabbitMQ 任务状态 stream 消费中断")
+			}
+			offset, err := rabbitStreamOffset(d)
+			if err != nil {
+				return 0, err
+			}
+			if offset != expected {
+				return 0, errors.New("queue: RabbitMQ 任务状态 stream 存在缺口")
+			}
+			if marker == "" && offset >= stop {
+				return stop, nil
+			}
+			if err := visit(d.Body); err != nil {
+				return 0, err
+			}
+			var event nativeTaskEvent
+			if err := json.Unmarshal(d.Body, &event); err != nil {
+				return 0, err
+			}
+			next := offset + 1
+			expected = next
+			if err := d.Ack(false); err != nil {
+				return 0, err
+			}
+			if event.EventID == marker {
+				return next, nil
+			}
+			if marker == "" && next >= stop {
+				return stop, nil
+			}
+		}
+	}
 }

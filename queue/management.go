@@ -2,9 +2,9 @@ package queue
 
 import "context"
 
-// TaskManagementAdapter defines the Asynq-style task operations. A runtime
-// without this adapter returns ErrUnsupportedCapability for these operations.
-// Native broker metrics and operations are exposed separately by Runtime.
+// TaskManagementAdapter defines Asynq-style task operations for backends that
+// can persist and coordinate individual task state. A runtime without this
+// adapter returns ErrUnsupportedCapability for these operations.
 type TaskManagementAdapter interface {
 	ListTasks(state, queue string, page, pageSize int) ([]TaskInfo, int, error)
 	GetTask(queue, id string) (TaskInfo, error)

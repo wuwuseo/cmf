@@ -20,10 +20,10 @@ type nsqBackend struct {
 }
 
 func (b *nsqBackend) Capabilities() Capabilities {
-	return Capabilities{QueuePause: b.cfg.NSQHTTP != ""}
+	return Capabilities{QueuePause: b.cfg.NSQHTTP != "", MaxRetry: true, Delay: true}
 }
 
-func openNSQ(_ context.Context, cfg RuntimeConfig) (nativeBackend, error) {
+func openNSQ(ctx context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 	if cfg.NSQD == "" {
 		return nil, errors.New("queue: nsq.nsqd 未配置")
 	}
@@ -38,15 +38,77 @@ func openNSQ(_ context.Context, cfg RuntimeConfig) (nativeBackend, error) {
 		p.Stop()
 		return nil, err
 	}
-	return &nsqBackend{cfg: cfg, producer: p, http: &http.Client{Timeout: 5 * time.Second}}, nil
+	b := &nsqBackend{cfg: cfg, producer: p, http: &http.Client{Timeout: 5 * time.Second}}
+	for queue := range cfg.Queues {
+		if err := b.createTopic(ctx, b.topic(queue)); err != nil {
+			p.Stop()
+			return nil, err
+		}
+		if err := b.createChannel(ctx, b.topic(queue), b.channel()); err != nil {
+			p.Stop()
+			return nil, err
+		}
+		if err := b.createTopic(ctx, b.deadTopic(queue)); err != nil {
+			p.Stop()
+			return nil, err
+		}
+		if err := b.createChannel(ctx, b.deadTopic(queue), b.deadChannel()); err != nil {
+			p.Stop()
+			return nil, err
+		}
+	}
+	return b, nil
 }
-func (b *nsqBackend) topic(queue string) string { return b.cfg.Namespace + "_" + queue }
-func (b *nsqBackend) channel() string           { return b.cfg.Namespace + "_workers" }
+func (b *nsqBackend) topic(queue string) string     { return b.cfg.Namespace + "_" + queue }
+func (b *nsqBackend) channel() string               { return b.cfg.Namespace + "_workers" }
+func (b *nsqBackend) deadTopic(queue string) string { return b.topic(queue) + "_dead" }
+func (b *nsqBackend) deadChannel() string           { return b.cfg.Namespace + "_dead" }
+func (b *nsqBackend) createTopic(ctx context.Context, topic string) error {
+	u := strings.TrimRight(b.cfg.NSQHTTP, "/") + "/topic/create?topic=" + url.QueryEscape(topic)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("queue: NSQ 创建 topic %s 失败: HTTP %d", topic, resp.StatusCode)
+	}
+	return nil
+}
+func (b *nsqBackend) createChannel(ctx context.Context, topic, channel string) error {
+	u := strings.TrimRight(b.cfg.NSQHTTP, "/") + "/channel/create?topic=" + url.QueryEscape(topic) + "&channel=" + url.QueryEscape(channel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := b.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("queue: NSQ 创建 channel %s/%s 失败: HTTP %d", topic, channel, resp.StatusCode)
+	}
+	return nil
+}
 func (b *nsqBackend) Publish(ctx context.Context, queue string, body []byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return b.producer.Publish(b.topic(queue), body)
+}
+func (b *nsqBackend) PublishDelayed(ctx context.Context, queue string, body []byte, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 {
+		return b.Publish(ctx, queue, body)
+	}
+	return b.producer.DeferredPublish(b.topic(queue), delay, body)
 }
 func (b *nsqBackend) Consume(ctx context.Context, queue string, process func(context.Context, []byte) error) error {
 	cfg := nsq.NewConfig()
@@ -59,7 +121,22 @@ func (b *nsqBackend) Consume(ctx context.Context, queue string, process func(con
 		return err
 	}
 	c.AddConcurrentHandlers(nsq.HandlerFunc(func(m *nsq.Message) error {
-		return process(ctx, m.Body)
+		attempt := int(m.Attempts) - 1
+		if attempt < 0 {
+			attempt = 0
+		}
+		err := process(context.WithValue(ctx, runtimeAttemptKey{}, attempt), m.Body)
+		if err == nil || ctx.Err() != nil {
+			return err
+		}
+		task, _ := nativeNotification(m.Body, b.cfg.MaxRetry)
+		if attempt < nativeRetryLimit(task.MaxRetry) {
+			return err
+		}
+		if pubErr := b.producer.Publish(b.deadTopic(queue), m.Body); pubErr != nil {
+			return pubErr
+		}
+		return nil
 	}), b.cfg.Concurrency)
 	if b.cfg.NSQLookupd != "" {
 		err = c.ConnectToNSQLookupd(b.cfg.NSQLookupd)

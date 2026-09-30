@@ -30,6 +30,11 @@ var (
 // TestMain 初始化测试 Redis：优先直连环境变量/本机 Redis（独立 DB 隔离），
 // 失败则尝试 testcontainers 容器；两者均不可用时跳过全部测试（与 cmf/redis 测试同模式）。
 func TestMain(m *testing.M) {
+	// Native broker and runtime unit tests do not need Redis. This mode lets
+	// them run on hosts which only provide the selected native broker.
+	if os.Getenv("CMF_QUEUE_TEST_ONLY_NATIVE") == "1" {
+		os.Exit(m.Run())
+	}
 	if v := os.Getenv("CMF_QUEUE_TEST_REDIS_ADDR"); v != "" {
 		testRedisAddr = v
 	}
