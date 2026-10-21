@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gofiber/storage"
-	"github.com/gofiber/storage/s3/v2"
 	"github.com/wuwuseo/cmf/config"
 	local "github.com/wuwuseo/cmf/storage/local"
 )
@@ -115,6 +116,17 @@ func (f *Filesystem) SetReader(key string, reader io.Reader, expiration time.Dur
 	return f.Adapter.Set(key, data, expiration)
 }
 
+// SetReaderWithContentType 与 SetReader 相同，但允许为对象写入 Content-Type
+// 等元数据（S3 等对象存储使用，本地磁盘驱动会忽略该参数）。
+func (f *Filesystem) SetReaderWithContentType(key string, reader io.Reader, contentType string, expiration time.Duration) error {
+	if adapter, ok := f.Adapter.(interface {
+		SetReaderWithContentType(string, io.Reader, string, time.Duration) error
+	}); ok {
+		return adapter.SetReaderWithContentType(key, reader, contentType, expiration)
+	}
+	return f.SetReader(key, reader, expiration)
+}
+
 // NewFilesystem 创建一个新的文件系统实例
 // 此方法保持向后兼容性，直接使用提供的适配器
 func NewFilesystem(adapter storage.Storage, config config.Config) *Filesystem {
@@ -150,23 +162,16 @@ func NewStorageDriver(cfg *config.Config, diskName string) (storage.Storage, err
 	var adapter storage.Storage
 	var err error
 
-	switch disk.Driver {
+	switch strings.ToLower(strings.TrimSpace(disk.Driver)) {
 	case "local":
 		// 获取本地存储的配置选项
 		// 获取根路径配置，默认为./data/storage
 		adapter, err = NewLocalStorage(options)
 
 	case "s3":
-		// 实现S3存储驱动
-		adapter, err = s3.New(s3.Config{
-			Credentials: s3.Credentials{
-				AccessKey:       options["access_key"].(string),
-				SecretAccessKey: options["secret_key"].(string),
-			},
-			Region:   options["region"].(string),
-			Bucket:   options["bucket"].(string),
-			Endpoint: options["endpoint"].(string),
-		}), nil
+		// options 可能包含任意值，缺失键不能触发 panic：全部按可选配置处理，
+		// 仅 bucket 为必填项。
+		adapter, err = newS3Storage(options)
 
 	default:
 		return nil, fmt.Errorf("不支持的存储驱动类型: %s", disk.Driver)
@@ -190,6 +195,39 @@ func NewLocalStorage(options map[string]any) (storage.Storage, error) {
 
 	// 创建本地存储实例
 	return local.New(local.Config{BasePath: rootPath}), nil
+}
+
+// LocalPublicRoot 返回本地磁盘对外静态目录（<root>/public）。
+// 用于 /uploads 静态挂载：路径从 filesystem.disks.local.options.root 推导，
+// 而不是在调用方写死 ./data/storage/public。磁盘不存在或驱动不是 local 时返回 false。
+func LocalPublicRoot(cfg config.Config, diskName string) (string, bool) {
+	name := strings.TrimSpace(diskName)
+	if name == "" {
+		// 默认磁盘是本地磁盘时复用默认磁盘，否则沿用历史约定查找 "local"
+		name = strings.TrimSpace(cfg.Filesystem.Default)
+		if name == "" || !isLocalDisk(cfg, name) {
+			name = "local"
+		}
+	}
+	if !isLocalDisk(cfg, name) {
+		return "", false
+	}
+
+	root := "./data/storage"
+	if options, ok := cfg.Filesystem.Disks[name].Options.(map[string]any); ok {
+		if configured := optionString(options, "root"); configured != "" {
+			root = configured
+		}
+	}
+	return filepath.Join(root, "public"), true
+}
+
+func isLocalDisk(cfg config.Config, name string) bool {
+	disk, ok := cfg.Filesystem.Disks[name]
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(disk.Driver), "local")
 }
 
 // NewFilesystemFromConfig 根据配置创建文件系统实例

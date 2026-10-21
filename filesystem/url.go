@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/wuwuseo/cmf/config"
 )
@@ -44,12 +43,12 @@ func XAccelRedirectPath(cfg config.Config, key string) (string, error) {
 }
 
 func S3PublicURL(cfg config.Config, diskName string, key string) (string, error) {
+	// S3 的公网直链必须显式配置（CDN 域名或桶的公开地址）。
+	// 不能回落到 attachment.public_base_url（默认 /uploads），否则会生成
+	// 应用无法提供的本地路径。
 	baseURL := diskPublicBaseURL(cfg, diskName)
 	if baseURL == "" {
-		baseURL = cfg.Attachment.PublicBaseURL
-	}
-	if baseURL == "" {
-		return "", fmt.Errorf("public base url is not configured")
+		return "", fmt.Errorf("s3 disk %q public_base_url is not configured", diskName)
 	}
 	return joinURLPath(baseURL, cleanStorageKey(key)), nil
 }
@@ -62,9 +61,8 @@ func S3PresignedGetURL(ctx context.Context, cfg config.Config, diskName string, 
 
 	accessKey := optionString(options, "access_key")
 	secretKey := optionString(options, "secret_key")
-	region := optionString(options, "region")
 	bucket := optionString(options, "bucket")
-	if accessKey == "" || secretKey == "" || region == "" || bucket == "" {
+	if accessKey == "" || secretKey == "" || bucket == "" {
 		return "", fmt.Errorf("s3 disk %q is missing required credentials or bucket options", diskName)
 	}
 	if ttl <= 0 {
@@ -77,12 +75,10 @@ func S3PresignedGetURL(ctx context.Context, cfg config.Config, diskName string, 
 		ttl = 10 * time.Minute
 	}
 
-	client := awss3.New(awss3.Options{
-		BaseEndpoint: aws.String(optionString(options, "endpoint")),
-		Credentials:  aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
-		Region:       region,
-		UsePathStyle: optionBool(options, "use_path_style"),
-	})
+	client, err := newS3Client(options)
+	if err != nil {
+		return "", err
+	}
 	presigner := awss3.NewPresignClient(client)
 	request, err := presigner.PresignGetObject(ctx, &awss3.GetObjectInput{
 		Bucket: aws.String(bucket),
@@ -148,6 +144,17 @@ func optionBool(options map[string]any, key string) bool {
 	default:
 		return false
 	}
+}
+
+// optionBoolDefault 仅当 key 未配置时使用 fallback，避免显式 false 被默认值覆盖。
+func optionBoolDefault(options map[string]any, key string, fallback bool) bool {
+	if options == nil {
+		return fallback
+	}
+	if _, ok := options[key]; !ok {
+		return fallback
+	}
+	return optionBool(options, key)
 }
 
 func optionDurationSeconds(options map[string]any, key string) time.Duration {
