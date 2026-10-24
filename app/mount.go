@@ -42,8 +42,11 @@ func ValidateApps(apps []App, opts Options) error {
 		}
 		dictKeys := map[string]bool{}
 		for _, item := range a.Dicts {
+			// Dict type 通常是 <code>_ 前缀的自有字典；sys_config_group 是唯一例外——
+			// 功能集可向核心配置分组字典追加条目（系统配置页按它渲染分组 tab）。
+			prefixedType := strings.HasPrefix(item.Type, a.Code+"_") && len(item.Type) > len(a.Code)+1
 			if item.Type == "" || item.Label == "" || item.Value == "" ||
-				!strings.HasPrefix(item.Type, a.Code+"_") || len(item.Type) == len(a.Code)+1 ||
+				(!prefixedType && item.Type != "sys_config_group") ||
 				dictKeys[item.Type+"\x00"+item.Value] {
 				return fmt.Errorf("app %s: invalid or duplicate dict item %q/%q", a.Code, item.Type, item.Value)
 			}

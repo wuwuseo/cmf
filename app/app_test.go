@@ -48,9 +48,13 @@ func TestValidateApps(t *testing.T) {
 		{"missing dict label", func(a *App) { a.Dicts[0].Label = "" }, "dict item"},
 		{"missing dict value", func(a *App) { a.Dicts[0].Value = "" }, "dict item"},
 		{"unprefixed dict type", func(a *App) { a.Dicts[0].Type = "status" }, "dict item"},
-		{"foreign dict type", func(a *App) { a.Dicts[0].Type = "sys_config_group" }, "dict item"},
+		{"foreign dict type", func(a *App) { a.Dicts[0].Type = "other_status" }, "dict item"},
 		{"bare dict prefix", func(a *App) { a.Dicts[0].Type = "demo_" }, "dict item"},
 		{"duplicate dict value", func(a *App) { a.Dicts = append(a.Dicts, a.Dicts[0]) }, "dict item"},
+		{"core config group allowed", func(a *App) {
+			a.Dicts[0].Type = "sys_config_group"
+			a.Dicts[0].Value = "demo"
+		}, ""},
 		{"disabled skips declarations", func(a *App) {
 			a.Enabled = false
 			a.Routes[0].Handler = nil
