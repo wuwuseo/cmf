@@ -40,6 +40,15 @@ func ValidateApps(apps []App, opts Options) error {
 			}
 			configKeys[item.Key] = true
 		}
+		dictKeys := map[string]bool{}
+		for _, item := range a.Dicts {
+			if item.Type == "" || item.Label == "" || item.Value == "" ||
+				!strings.HasPrefix(item.Type, a.Code+"_") || len(item.Type) == len(a.Code)+1 ||
+				dictKeys[item.Type+"\x00"+item.Value] {
+				return fmt.Errorf("app %s: invalid or duplicate dict item %q/%q", a.Code, item.Type, item.Value)
+			}
+			dictKeys[item.Type+"\x00"+item.Value] = true
+		}
 		perms := make(map[string]Permission, len(a.Permissions))
 		apiPermissions := map[string]bool{}
 		appPath := path.Join(opts.BasePath, a.Code)

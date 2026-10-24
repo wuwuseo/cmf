@@ -11,6 +11,9 @@ import (
 func testApp() App {
 	return App{
 		Code: "demo", Name: "Demo", Enabled: true,
+		Dicts: []DictItem{
+			{Type: "demo_status", Label: "Enabled", Value: "1", Sort: 1},
+		},
 		Routes: []Route{{Method: "GET", Path: "/items/:id", Auth: AuthAdmin, Handler: func(c fiber.Ctx) error {
 			return c.SendString("ok")
 		}}},
@@ -42,7 +45,17 @@ func TestValidateApps(t *testing.T) {
 		{"overlapping auth", func(a *App) {
 			a.Routes = append(a.Routes, Route{Method: "GET", Path: "/items/public", Auth: AuthPublic, Handler: a.Routes[0].Handler})
 		}, "overlapping routes"},
-		{"disabled skips declarations", func(a *App) { a.Enabled = false; a.Routes[0].Handler = nil }, ""},
+		{"missing dict label", func(a *App) { a.Dicts[0].Label = "" }, "dict item"},
+		{"missing dict value", func(a *App) { a.Dicts[0].Value = "" }, "dict item"},
+		{"unprefixed dict type", func(a *App) { a.Dicts[0].Type = "status" }, "dict item"},
+		{"foreign dict type", func(a *App) { a.Dicts[0].Type = "sys_config_group" }, "dict item"},
+		{"bare dict prefix", func(a *App) { a.Dicts[0].Type = "demo_" }, "dict item"},
+		{"duplicate dict value", func(a *App) { a.Dicts = append(a.Dicts, a.Dicts[0]) }, "dict item"},
+		{"disabled skips declarations", func(a *App) {
+			a.Enabled = false
+			a.Routes[0].Handler = nil
+			a.Dicts[0].Label = ""
+		}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := testApp()
@@ -58,6 +71,7 @@ func TestValidateApps(t *testing.T) {
 func TestMountMiddlewareOrder(t *testing.T) {
 	a := testApp()
 	a.Code = "mountdemo"
+	a.Dicts[0].Type = "mountdemo_status"
 	a.Permissions[0].Code = "mountdemo:menu"
 	a.Permissions[1].Code = "mountdemo:item"
 	a.Permissions[1].Parent = "mountdemo:menu"

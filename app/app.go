@@ -40,6 +40,18 @@ type ConfigItem struct {
 	Remark string
 }
 
+// DictItem declares one dictionary entry. Type must be prefixed with "<code>_" so
+// feature sets cannot collide with core dictionaries or each other.
+type DictItem struct {
+	Type      string
+	Label     string
+	Value     string
+	Sort      int
+	CSSClass  string
+	IsDefault bool
+	Remark    string
+}
+
 type Permission struct {
 	Type        PermissionType
 	Name        string
@@ -61,6 +73,7 @@ type App struct {
 	Version     string
 	Enabled     bool
 	Config      []ConfigItem
+	Dicts       []DictItem
 	Routes      []Route
 	Permissions []Permission
 }
