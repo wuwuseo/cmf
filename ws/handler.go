@@ -47,10 +47,10 @@ func NewConnectHandler(hub *Hub) fiber.Handler {
 		if len(addresses) == 0 {
 			return c.Status(fiber.StatusUnauthorized).SendString("ticket 无效或已过期")
 		}
-		for _, addr := range addresses {
-			if hub.Count(addr) >= hub.cfg.MaxConnsPerAddress {
-				return c.Status(fiber.StatusTooManyRequests).SendString("连接数超过上限")
-			}
+		// 只对身份地址（ticket 首个地址）做连接数限制：功能集可以把共享房间（如抢单大厅）
+		// 绑定为附加地址，这类地址的成员数随在线用户增长，不能按「单用户多设备」的口径限流。
+		if hub.Count(addresses[0]) >= hub.cfg.MaxConnsPerAddress {
+			return c.Status(fiber.StatusTooManyRequests).SendString("连接数超过上限")
 		}
 		c.Locals(localsAddressesKey, addresses)
 		return upgrade(c)
